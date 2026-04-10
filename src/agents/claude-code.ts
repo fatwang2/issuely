@@ -269,12 +269,10 @@ export class ClaudeCodeBackend implements AgentBackend {
         }
       }
 
+      // "result" event is a summary that duplicates the assistant text — skip it.
+      // Session ID extraction is handled separately in extractSessionId().
       if (data.type === "result") {
-        return {
-          type: "text",
-          content: data.result || "",
-          timestamp: Date.now(),
-        };
+        return null;
       }
 
       return null;

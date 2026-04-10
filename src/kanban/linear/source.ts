@@ -13,6 +13,7 @@ import {
 import {
   verifyWebhookSignature,
   parseAgentSessionEvent,
+  extractProjectName,
   type AgentSessionPayload,
 } from "./webhook";
 
@@ -24,6 +25,8 @@ export class LinearSource implements KanbanSource {
   private server: ReturnType<typeof Bun.serve> | null = null;
   private handler: ((task: TaskRequest) => void) | null = null;
   private clients: Map<string, LinearClient> = new Map();
+  private processedSessions: Set<string> = new Set();
+  private issueProjectNames: Map<string, string> = new Map(); // issueId -> projectName
 
   constructor(config: LinearConfig) {
     this.config = config;
@@ -197,10 +200,31 @@ export class LinearSource implements KanbanSource {
       return new Response("Invalid signature", { status: 401 });
     }
 
+    log.debug("Raw webhook payload", { body });
+
     const payload = parseAgentSessionEvent(body);
     if (!payload) {
       return new Response("OK", { status: 200 });
     }
+
+    // Dedup: skip if we already processed this session+action combo
+    const dedupKey = `${payload.agentSession.id}:${payload.action}:${payload.agentActivity?.id ?? "init"}`;
+    log.info("Webhook received", {
+      action: payload.action,
+      sessionId: payload.agentSession.id,
+      activityId: payload.agentActivity?.id,
+      issue: payload.agentSession.issue.identifier,
+      issueProject: payload.agentSession.issue.project,
+      issueTeam: payload.agentSession.issue.team,
+      hasPromptContext: !!payload.promptContext,
+      dedupKey,
+    });
+
+    if (this.processedSessions.has(dedupKey)) {
+      log.warn("Duplicate webhook skipped", { dedupKey });
+      return new Response("OK", { status: 200 });
+    }
+    this.processedSessions.add(dedupKey);
 
     // Process asynchronously to respond quickly
     this.processAgentSession(payload).catch((e) => {
@@ -258,6 +282,14 @@ export class LinearSource implements KanbanSource {
       }
     }
 
+    // Resolve project name: webhook payload > promptContext > cached from previous created event
+    let projectName = issue.project?.name || extractProjectName(promptContext);
+    if (projectName) {
+      this.issueProjectNames.set(issue.id, projectName);
+    } else {
+      projectName = this.issueProjectNames.get(issue.id);
+    }
+
     const taskRequest: TaskRequest = {
       id: uuid(),
       source: "linear",
@@ -267,12 +299,13 @@ export class LinearSource implements KanbanSource {
       title: issue.title,
       description: issue.description || "",
       prompt,
-      projectId: issue.project?.id || issue.team?.id,
+      projectId: issue.project?.id,
+      projectName,
       isFollowUp,
       metadata: {
         issueUrl: issue.url,
         issueIdentifier: issue.identifier,
-        projectName: issue.project?.name,
+        projectName,
         teamName: issue.team?.name,
         action: payload.action,
       },
