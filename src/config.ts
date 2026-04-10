@@ -56,7 +56,7 @@ function parseProjectDirs(): Record<string, string> {
 export function loadConfig(): Config {
   return {
     linear: {
-      port: parseInt(process.env.PORT || "3000", 10),
+      port: parseInt(process.env.PORT || "3010", 10),
       baseUrl: requireEnv("BASE_URL"),
       clientId: requireEnv("LINEAR_CLIENT_ID"),
       clientSecret: requireEnv("LINEAR_CLIENT_SECRET"),

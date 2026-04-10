@@ -4,8 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun run --watch src/main.ts",
-    "start": "bun run src/main.ts"
+    "dev": "PORT=3010 bun run --watch src/main.ts",
+    "start": "PORT=3010 bun run src/main.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
