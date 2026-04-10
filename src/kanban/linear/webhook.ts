@@ -64,6 +64,16 @@ export interface AgentSessionPayload {
   }>;
 }
 
+/**
+ * Extract project name from promptContext XML.
+ * Format: <project name="ProjectName">...</project>
+ */
+export function extractProjectName(promptContext?: string): string | undefined {
+  if (!promptContext) return undefined;
+  const match = promptContext.match(/<project\s+name="([^"]+)"/);
+  return match?.[1];
+}
+
 export function parseAgentSessionEvent(
   body: string
 ): AgentSessionPayload | null {

@@ -8,6 +8,7 @@ export interface TaskRequest {
   description: string;
   prompt: string;
   projectId?: string;
+  projectName?: string;
   isFollowUp: boolean; // true for "prompted" events (thread replies)
   metadata: Record<string, unknown>;
 }

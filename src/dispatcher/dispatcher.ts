@@ -184,10 +184,27 @@ export class TaskDispatcher {
   }
 
   private resolveWorkDir(request: TaskRequest): string {
-    // Check project-specific directory mapping
-    if (request.projectId) {
-      const dir = this.config.projectDirs[request.projectId];
-      if (dir) return dir;
+    // Check project-specific directory mapping (by ID or name, case-insensitive)
+    if (request.projectId || request.projectName) {
+      for (const [key, dir] of Object.entries(this.config.projectDirs)) {
+        if (
+          request.projectId === key ||
+          (request.projectName && request.projectName.toLowerCase() === key.toLowerCase())
+        ) {
+          log.info("Resolved workdir by project mapping", {
+            matchedKey: key,
+            projectId: request.projectId,
+            projectName: request.projectName,
+            dir,
+          });
+          return dir;
+        }
+      }
+      log.warn("No project mapping found", {
+        projectId: request.projectId,
+        projectName: request.projectName,
+        availableKeys: Object.keys(this.config.projectDirs),
+      });
     }
 
     // Check for dir: override in prompt
