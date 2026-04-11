@@ -42,13 +42,13 @@ Three layers:
    # Create a tunnel (one-time)
    cloudflared tunnel create kanban-bridge
 
-   # Configure the tunnel to point to localhost:3000
+   # Configure the tunnel to point to localhost:3010
    # Add to ~/.cloudflared/config.yml:
    #   tunnel: <TUNNEL_ID>
    #   credentials-file: ~/.cloudflared/credentials/<TUNNEL_ID>.json
    #   ingress:
    #     - hostname: kanban-bridge.yourdomain.com
-   #       service: http://localhost:3000
+   #       service: http://localhost:3010
    #     - service: http_status:404
 
    # Route DNS (one-time)
@@ -60,7 +60,7 @@ Three layers:
 
    Or for quick testing without a domain:
    ```bash
-   cloudflared tunnel --url http://localhost:3000
+   cloudflared tunnel --url http://localhost:3010
    ```
 
 3. **Create a Linear OAuth application:**
@@ -83,7 +83,7 @@ Three layers:
    ```
 
 6. **Authorize with Linear:**
-   - Visit `http://localhost:3000/oauth/authorize`
+   - Visit `http://localhost:3010/oauth/authorize`
    - Complete the OAuth flow
 
 ### Usage
@@ -91,18 +91,60 @@ Three layers:
 In any Linear issue, @mention your agent app. The bridge will:
 1. Receive the webhook event
 2. Dispatch the task to Claude Code CLI
-3. Stream progress updates back to Linear
-4. Post the final result as a comment
+3. Stream progress updates (thinking, tool use, plan) back to Linear
+4. Post the final result as a response activity
+
+Follow-up replies in the same thread automatically resume the previous
+Claude Code session via `--resume`, so conversation context is preserved.
 
 ### Project Directory Mapping
 
-Map Linear projects/teams to local directories:
+Map Linear issues to local directories via `PROJECT_DIRS`:
 
 ```bash
-PROJECT_DIRS=proj_abc123=/Users/you/repos/frontend,proj_def456=/Users/you/repos/backend
+PROJECT_DIRS=KEY=/path/to/repo,KEY=/path/to/repo
 ```
 
-Or override per-request by including `dir:/path/to/repo` in your @mention message.
+Each `KEY` is matched (case-insensitive) against the incoming issue's
+`projectId`, `projectName`, `teamId`, `teamKey`, and `teamName` —
+whichever hits first wins. The most intuitive keys in practice:
+
+- **Team key** (the issue-id prefix, e.g. `FAT` for `FAT-505`) — good when
+  one team maps to one repo.
+- **Project name** — good when one team has multiple projects and each
+  project maps to a different repo.
+
+Example:
+
+```bash
+PROJECT_DIRS=FAT=/Users/you/repos/main,DesignSystem=/Users/you/repos/ds
+```
+
+On follow-up replies Linear's webhook omits project info. The bridge
+falls back to an in-memory cache (seeded from the original `created`
+event) and, if still empty, queries the Linear GraphQL API to resolve
+the issue's project. No extra configuration needed — it just works
+after the first resolution per issue.
+
+Override per-request by including `dir:/path/to/repo` in your message.
+
+### Stopping a Running Task
+
+Clicking the stop button in a Linear agent thread sends a `stop`
+signal to the bridge, which immediately kills the running Claude Code
+subprocess and drops any queued follow-ups for the same session.
+Linear then shows a `Stopped.` activity in the thread.
+
+### Agent Session Plan
+
+If Claude Code uses its internal `TodoWrite` tool during a task, the
+bridge mirrors the todo list to Linear's **agent session plan** via
+`agentSessionUpdate`, so you see a live checklist in the thread with
+each step's status (`pending` / `inProgress` / `completed`). Short tasks
+that don't trigger `TodoWrite` simply have no plan — no action needed.
+
+> Linear's agent plan API is marked as technology preview and the
+> rendering UI may evolve.
 
 ### Claude Code Permission Mode
 
