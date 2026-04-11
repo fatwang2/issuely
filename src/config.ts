@@ -74,7 +74,7 @@ export function loadConfig(): Config {
     dispatcher: {
       maxConcurrent: parseInt(process.env.MAX_CONCURRENT || "1", 10),
       defaultWorkDir: process.env.DEFAULT_WORK_DIR || process.cwd(),
-      timeoutMs: parseInt(process.env.TIMEOUT_MS || "1200000", 10), // 20 min
+      timeoutMs: parseInt(process.env.TIMEOUT_MS || "480000", 10), // 8 min
       progressThrottleMs: parseInt(
         process.env.PROGRESS_THROTTLE_MS || "5000",
         10

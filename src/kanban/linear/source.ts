@@ -2,7 +2,7 @@ import { LinearClient } from "@linear/sdk";
 import { v4 as uuid } from "uuid";
 import type { LinearConfig } from "../../config";
 import { createLogger } from "../../util/logger";
-import type { KanbanSource, TaskRequest, TaskUpdate } from "../types";
+import type { KanbanSource, StopSignal, TaskRequest, TaskUpdate } from "../types";
 import {
   buildAuthorizationUrl,
   exchangeCodeForTokens,
@@ -24,9 +24,11 @@ export class LinearSource implements KanbanSource {
   private config: LinearConfig;
   private server: ReturnType<typeof Bun.serve> | null = null;
   private handler: ((task: TaskRequest) => void) | null = null;
+  private stopHandler: ((signal: StopSignal) => void) | null = null;
   private clients: Map<string, LinearClient> = new Map();
   private processedSessions: Set<string> = new Set();
-  private issueProjectNames: Map<string, string> = new Map(); // issueId -> projectName
+  // issueId -> { id?, name } resolved from webhook, promptContext, or API fallback
+  private issueProjects: Map<string, { id?: string; name: string }> = new Map();
 
   constructor(config: LinearConfig) {
     this.config = config;
@@ -34,6 +36,10 @@ export class LinearSource implements KanbanSource {
 
   onTaskRequest(handler: (task: TaskRequest) => void): void {
     this.handler = handler;
+  }
+
+  onStopSignal(handler: (signal: StopSignal) => void): void {
+    this.stopHandler = handler;
   }
 
   async start(): Promise<void> {
@@ -117,7 +123,11 @@ export class LinearSource implements KanbanSource {
       agentSessionId: task.sessionId,
       content,
     };
-    if (update.type === "progress") {
+    // Linear only accepts ephemeral on thought/action (maps to thinking/progress).
+    if (
+      update.ephemeral === true &&
+      (update.type === "thinking" || update.type === "progress")
+    ) {
       input.ephemeral = true;
     }
 
@@ -152,6 +162,52 @@ export class LinearSource implements KanbanSource {
         error: String(e),
         type: update.type,
       });
+    }
+  }
+
+  private async fetchIssueProject(
+    issueId: string,
+    organizationId: string
+  ): Promise<{ id?: string; name: string } | null> {
+    const tokens = getTokens(organizationId);
+    if (!tokens) {
+      log.warn("Cannot fetch issue project: no tokens", { organizationId });
+      return null;
+    }
+
+    const query = `
+      query IssueProject($id: String!) {
+        issue(id: $id) { project { id name } }
+      }
+    `;
+
+    try {
+      const response = await fetch(`${this.config.linearApiUrl}/graphql`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${tokens.access_token}`,
+        },
+        body: JSON.stringify({ query, variables: { id: issueId } }),
+      });
+
+      if (!response.ok) {
+        log.error("fetchIssueProject non-OK", {
+          status: response.status,
+          body: await response.text(),
+        });
+        return null;
+      }
+
+      const data = (await response.json()) as {
+        data?: { issue?: { project?: { id: string; name: string } | null } };
+      };
+      const project = data?.data?.issue?.project;
+      if (!project) return null;
+      return { id: project.id, name: project.name };
+    } catch (e) {
+      log.error("fetchIssueProject failed", { error: String(e) });
+      return null;
     }
   }
 
@@ -253,7 +309,13 @@ export class LinearSource implements KanbanSource {
         sessionId: agentSession.id,
         issue: issue.identifier,
       });
-      // TODO: abort running task for this session
+      if (this.stopHandler) {
+        this.stopHandler({
+          source: "linear",
+          externalId: issue.id,
+          sessionId: agentSession.id,
+        });
+      }
       return;
     }
 
@@ -282,12 +344,34 @@ export class LinearSource implements KanbanSource {
       }
     }
 
-    // Resolve project name: webhook payload > promptContext > cached from previous created event
-    let projectName = issue.project?.name || extractProjectName(promptContext);
-    if (projectName) {
-      this.issueProjectNames.set(issue.id, projectName);
+    // Resolve project: webhook > promptContext > memory cache > Linear API fallback.
+    let projectId: string | undefined = issue.project?.id;
+    let projectName: string | undefined =
+      issue.project?.name || extractProjectName(promptContext);
+
+    if (projectId || projectName) {
+      this.issueProjects.set(issue.id, { id: projectId, name: projectName! });
     } else {
-      projectName = this.issueProjectNames.get(issue.id);
+      const cached = this.issueProjects.get(issue.id);
+      if (cached) {
+        projectId = cached.id;
+        projectName = cached.name;
+      } else {
+        // Memory miss — query Linear for this issue's project.
+        const fetched = await this.fetchIssueProject(issue.id, organizationId);
+        if (fetched) {
+          projectId = fetched.id;
+          projectName = fetched.name;
+          this.issueProjects.set(issue.id, fetched);
+          log.info("Resolved project via Linear API", {
+            issueId: issue.id,
+            projectId,
+            projectName,
+          });
+        } else {
+          log.warn("Could not resolve project for issue", { issueId: issue.id });
+        }
+      }
     }
 
     const taskRequest: TaskRequest = {
@@ -299,8 +383,11 @@ export class LinearSource implements KanbanSource {
       title: issue.title,
       description: issue.description || "",
       prompt,
-      projectId: issue.project?.id,
+      projectId,
       projectName,
+      teamId: issue.team?.id,
+      teamKey: issue.team?.key,
+      teamName: issue.team?.name,
       isFollowUp,
       metadata: {
         issueUrl: issue.url,

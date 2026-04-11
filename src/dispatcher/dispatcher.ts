@@ -1,6 +1,7 @@
 import type { AgentRegistry } from "../agents/registry";
+import type { AgentSession } from "../agents/types";
 import type { DispatcherConfig } from "../config";
-import type { KanbanSource, TaskRequest } from "../kanban/types";
+import type { KanbanSource, StopSignal, TaskRequest } from "../kanban/types";
 import { createLogger } from "../util/logger";
 import type { Task } from "./types";
 
@@ -12,6 +13,8 @@ export class TaskDispatcher {
   private queue: TaskRequest[] = [];
   private sessions: Map<string, string> = new Map(); // issueId -> agentSessionId (for resume)
   private lastProgressTime: Map<string, number> = new Map();
+  // Running agent sessions keyed by kanban session ID (for abort)
+  private runningSessions: Map<string, AgentSession> = new Map();
 
   constructor(
     private agents: AgentRegistry,
@@ -25,12 +28,6 @@ export class TaskDispatcher {
       log.error("Unknown source", { source: request.source });
       return;
     }
-
-    // Immediately acknowledge (Linear requires <10s response)
-    await source.postUpdate(request, {
-      type: "thinking",
-      content: "Processing your request...",
-    });
 
     const task: Task = {
       request,
@@ -112,10 +109,26 @@ export class TaskDispatcher {
         systemPrompt,
       });
 
-      // Stream progress updates
+      if (request.sessionId) {
+        this.runningSessions.set(request.sessionId, session);
+      }
+
+      // Stream progress updates (thinking + tool usage)
       for await (const msg of session.messages) {
-        if (msg.type === "tool_use") {
-          await this.throttledProgress(request, source, `Using tool: ${msg.tool}`);
+        if (msg.type === "thinking") {
+          const summary =
+            msg.content.length > 500
+              ? msg.content.slice(0, 500) + "..."
+              : msg.content;
+          await this.throttledUpdate(request, source, {
+            type: "thinking",
+            content: summary,
+          });
+        } else if (msg.type === "tool_use") {
+          await this.throttledUpdate(request, source, {
+            type: "progress",
+            content: `Using tool: ${msg.tool}`,
+          });
         }
       }
 
@@ -129,7 +142,14 @@ export class TaskDispatcher {
         this.sessions.set(request.externalId, result.sessionId);
       }
 
-      if (result.status === "completed") {
+      if (task.userAborted) {
+        task.status = "failed";
+        log.info("Task stopped by user", { taskId: request.id });
+        await source.postUpdate(request, {
+          type: "progress",
+          content: "Stopped.",
+        });
+      } else if (result.status === "completed") {
         task.status = "completed";
         await source.postUpdate(request, {
           type: "result",
@@ -165,14 +185,17 @@ export class TaskDispatcher {
     } finally {
       this.running--;
       this.lastProgressTime.delete(request.id);
+      if (request.sessionId) {
+        this.runningSessions.delete(request.sessionId);
+      }
       this.drainQueue();
     }
   }
 
-  private async throttledProgress(
+  private async throttledUpdate(
     request: TaskRequest,
     source: KanbanSource,
-    content: string
+    update: { type: "thinking" | "progress"; content: string }
   ): Promise<void> {
     const now = Date.now();
     const last = this.lastProgressTime.get(request.id) || 0;
@@ -180,30 +203,43 @@ export class TaskDispatcher {
       return;
     }
     this.lastProgressTime.set(request.id, now);
-    await source.postUpdate(request, { type: "progress", content });
+    await source.postUpdate(request, update);
   }
 
   private resolveWorkDir(request: TaskRequest): string {
-    // Check project-specific directory mapping (by ID or name, case-insensitive)
-    if (request.projectId || request.projectName) {
-      for (const [key, dir] of Object.entries(this.config.projectDirs)) {
-        if (
-          request.projectId === key ||
-          (request.projectName && request.projectName.toLowerCase() === key.toLowerCase())
-        ) {
-          log.info("Resolved workdir by project mapping", {
+    // Try matching mapping keys against project id/name, team id/key/name.
+    // Keys are matched case-insensitively.
+    const candidates: Array<{ label: string; value?: string }> = [
+      { label: "projectId", value: request.projectId },
+      { label: "projectName", value: request.projectName },
+      { label: "teamId", value: request.teamId },
+      { label: "teamKey", value: request.teamKey },
+      { label: "teamName", value: request.teamName },
+    ];
+
+    for (const [key, dir] of Object.entries(this.config.projectDirs)) {
+      const keyLower = key.toLowerCase();
+      for (const c of candidates) {
+        if (c.value && c.value.toLowerCase() === keyLower) {
+          log.info("Resolved workdir by mapping", {
+            matchedBy: c.label,
             matchedKey: key,
-            projectId: request.projectId,
-            projectName: request.projectName,
             dir,
           });
           return dir;
         }
       }
-      log.warn("No project mapping found", {
+    }
+
+    if (Object.keys(this.config.projectDirs).length > 0) {
+      log.warn("No workdir mapping matched; using default", {
         projectId: request.projectId,
         projectName: request.projectName,
+        teamId: request.teamId,
+        teamKey: request.teamKey,
+        teamName: request.teamName,
         availableKeys: Object.keys(this.config.projectDirs),
+        defaultWorkDir: this.config.defaultWorkDir,
       });
     }
 
@@ -221,6 +257,48 @@ export class TaskDispatcher {
       const next = this.queue.shift()!;
       this.executeTask(next).catch((e) => {
         log.error("Failed to execute queued task", { error: String(e) });
+      });
+    }
+  }
+
+  abort(signal: StopSignal): void {
+    // 1. Drop any queued tasks for this session.
+    const before = this.queue.length;
+    this.queue = this.queue.filter((r) => {
+      if (r.sessionId === signal.sessionId) {
+        const task = this.tasks.get(r.id);
+        if (task) task.status = "failed";
+        return false;
+      }
+      return true;
+    });
+    const droppedQueued = before - this.queue.length;
+
+    // 2. Abort running session, if any.
+    const running = this.runningSessions.get(signal.sessionId);
+    if (running) {
+      // Mark the running task so the completion path posts "Stopped" not "timeout".
+      for (const task of this.tasks.values()) {
+        if (
+          task.status === "running" &&
+          task.request.sessionId === signal.sessionId
+        ) {
+          task.userAborted = true;
+        }
+      }
+      log.info("Aborting running session", {
+        sessionId: signal.sessionId,
+        droppedQueued,
+      });
+      running.abort();
+    } else if (droppedQueued > 0) {
+      log.info("Dropped queued tasks for stopped session", {
+        sessionId: signal.sessionId,
+        droppedQueued,
+      });
+    } else {
+      log.warn("Stop signal with no running or queued task", {
+        sessionId: signal.sessionId,
       });
     }
   }

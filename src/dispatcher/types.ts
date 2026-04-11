@@ -10,4 +10,5 @@ export interface Task {
   startedAt?: number;
   completedAt?: number;
   result?: AgentResult;
+  userAborted?: boolean;
 }

@@ -41,6 +41,7 @@ export interface AgentSessionPayload {
       };
       team?: {
         id: string;
+        key?: string;
         name: string;
       };
     };

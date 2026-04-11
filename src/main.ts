@@ -1,3 +1,4 @@
+import { homedir } from "os";
 import { loadConfig } from "./config";
 import { ClaudeCodeBackend } from "./agents/claude-code";
 import { AgentRegistry } from "./agents/registry";
@@ -12,6 +13,19 @@ async function main() {
 
   // 1. Load configuration
   const config = loadConfig();
+
+  if (config.dispatcher.defaultWorkDir === homedir()) {
+    log.warn(
+      "DEFAULT_WORK_DIR is your home directory — Claude Code will launch without a project context. Set PROJECT_DIRS or DEFAULT_WORK_DIR to point at a real repo.",
+      { defaultWorkDir: config.dispatcher.defaultWorkDir }
+    );
+  }
+  log.info("Dispatcher config", {
+    maxConcurrent: config.dispatcher.maxConcurrent,
+    timeoutMs: config.dispatcher.timeoutMs,
+    defaultWorkDir: config.dispatcher.defaultWorkDir,
+    projectDirKeys: Object.keys(config.dispatcher.projectDirs),
+  });
 
   // 2. Set up agent registry
   const agents = new AgentRegistry(config.agents.defaultAgent);
@@ -45,6 +59,9 @@ async function main() {
     dispatcher.dispatch(task).catch((e) => {
       log.error("Dispatch failed", { error: String(e), taskId: task.id });
     });
+  });
+  linear.onStopSignal((signal) => {
+    dispatcher.abort(signal);
   });
 
   // 6. Start listening
