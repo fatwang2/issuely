@@ -31,11 +31,19 @@ export interface StopSignal {
   sessionId: string;
 }
 
+export type PlanItemStatus = "pending" | "inProgress" | "completed" | "canceled";
+
+export interface PlanItem {
+  content: string;
+  status: PlanItemStatus;
+}
+
 export interface KanbanSource {
   readonly name: string;
   start(): Promise<void>;
   onTaskRequest(handler: (task: TaskRequest) => void): void;
   onStopSignal(handler: (signal: StopSignal) => void): void;
   postUpdate(task: TaskRequest, update: TaskUpdate): Promise<void>;
+  updateSessionPlan(task: TaskRequest, plan: PlanItem[]): Promise<void>;
   stop(): Promise<void>;
 }

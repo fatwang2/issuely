@@ -1,11 +1,46 @@
 import type { AgentRegistry } from "../agents/registry";
 import type { AgentSession } from "../agents/types";
 import type { DispatcherConfig } from "../config";
-import type { KanbanSource, StopSignal, TaskRequest } from "../kanban/types";
+import type {
+  KanbanSource,
+  PlanItem,
+  PlanItemStatus,
+  StopSignal,
+  TaskRequest,
+} from "../kanban/types";
 import { createLogger } from "../util/logger";
 import type { Task } from "./types";
 
 const log = createLogger("dispatcher");
+
+/**
+ * Parse a Claude Code TodoWrite tool_use input (stringified JSON) into
+ * Linear plan items. Claude Code's shape:
+ *   {todos: [{content, status: "pending"|"in_progress"|"completed", activeForm}]}
+ */
+function parseTodoWritePlan(rawInput: string): PlanItem[] | null {
+  try {
+    const parsed = JSON.parse(rawInput) as {
+      todos?: Array<{ content?: string; status?: string }>;
+    };
+    if (!parsed?.todos || !Array.isArray(parsed.todos)) return null;
+
+    const statusMap: Record<string, PlanItemStatus> = {
+      pending: "pending",
+      in_progress: "inProgress",
+      completed: "completed",
+    };
+
+    return parsed.todos
+      .filter((t) => typeof t.content === "string" && t.content.length > 0)
+      .map((t) => ({
+        content: t.content!,
+        status: statusMap[t.status ?? "pending"] ?? "pending",
+      }));
+  } catch {
+    return null;
+  }
+}
 
 export class TaskDispatcher {
   private tasks: Map<string, Task> = new Map();
@@ -125,6 +160,14 @@ export class TaskDispatcher {
             content: summary,
           });
         } else if (msg.type === "tool_use") {
+          // Special case: TodoWrite → sync to Linear agent session plan.
+          if (msg.tool === "TodoWrite") {
+            const plan = parseTodoWritePlan(msg.content);
+            if (plan) {
+              await source.updateSessionPlan(request, plan);
+              continue;
+            }
+          }
           await this.throttledUpdate(request, source, {
             type: "progress",
             content: `Using tool: ${msg.tool}`,

@@ -2,7 +2,13 @@ import { LinearClient } from "@linear/sdk";
 import { v4 as uuid } from "uuid";
 import type { LinearConfig } from "../../config";
 import { createLogger } from "../../util/logger";
-import type { KanbanSource, StopSignal, TaskRequest, TaskUpdate } from "../types";
+import type {
+  KanbanSource,
+  PlanItem,
+  StopSignal,
+  TaskRequest,
+  TaskUpdate,
+} from "../types";
 import {
   buildAuthorizationUrl,
   exchangeCodeForTokens,
@@ -162,6 +168,71 @@ export class LinearSource implements KanbanSource {
         error: String(e),
         type: update.type,
       });
+    }
+  }
+
+  async updateSessionPlan(task: TaskRequest, plan: PlanItem[]): Promise<void> {
+    if (!task.sessionId) {
+      log.error("Cannot update plan: no session ID");
+      return;
+    }
+
+    const tokens = getTokens(task.organizationId);
+    if (!tokens) {
+      log.error("Cannot update plan: no tokens", {
+        organizationId: task.organizationId,
+      });
+      return;
+    }
+
+    // plan is a flat Array<{content, status}>. Full replacement each time.
+    // Status enum: pending | inProgress | completed | canceled.
+    // Docs: https://linear.app/developers/agent-interaction (Agent plans)
+    const mutation = `
+      mutation UpdateAgentSession($id: String!, $input: AgentSessionUpdateInput!) {
+        agentSessionUpdate(id: $id, input: $input) { success }
+      }
+    `;
+
+    try {
+      const response = await fetch(`${this.config.linearApiUrl}/graphql`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${tokens.access_token}`,
+        },
+        body: JSON.stringify({
+          query: mutation,
+          variables: {
+            id: task.sessionId,
+            input: { plan },
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        log.error("Failed to update plan", {
+          status: response.status,
+          body: await response.text(),
+        });
+        return;
+      }
+
+      const data = (await response.json()) as {
+        data?: { agentSessionUpdate?: { success?: boolean } };
+        errors?: Array<{ message: string }>;
+      };
+      if (data.errors?.length) {
+        log.error("agentSessionUpdate errors", { errors: data.errors });
+        return;
+      }
+
+      log.debug("Updated plan", {
+        sessionId: task.sessionId,
+        items: plan.length,
+      });
+    } catch (e) {
+      log.error("updateSessionPlan failed", { error: String(e) });
     }
   }
 
