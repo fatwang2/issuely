@@ -104,6 +104,19 @@ PROJECT_DIRS=proj_abc123=/Users/you/repos/frontend,proj_def456=/Users/you/repos/
 
 Or override per-request by including `dir:/path/to/repo` in your @mention message.
 
+### Claude Code Permission Mode
+
+The bridge runs Claude Code CLI non-interactively, so it passes `--permission-mode` on every invocation. Configure via `CLAUDE_CODE_PERMISSION_MODE` in `.env`:
+
+| Mode | Behavior |
+|---|---|
+| `default` | Prompts for confirmation on sensitive tools — **not usable** in webhook mode (no one to confirm) |
+| `acceptEdits` | Auto-accepts file edits (Edit/Write); still prompts for other sensitive ops |
+| `plan` | Read-only planning mode; no file writes or command execution |
+| `bypassPermissions` | Skips all permission checks (equivalent to `--dangerously-skip-permissions`) |
+
+**Default: `bypassPermissions`**, since the bridge is non-interactive. Switch to `acceptEdits` if you want a safer middle ground.
+
 ## Development
 
 ```bash

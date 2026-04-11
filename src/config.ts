@@ -16,12 +16,19 @@ export interface DispatcherConfig {
   projectDirs: Record<string, string>;
 }
 
+export type ClaudeCodePermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "plan"
+  | "bypassPermissions";
+
 export interface AgentConfig {
   defaultAgent?: string;
   claudeCode?: {
     path?: string;
     model?: string;
     maxTurns?: number;
+    permissionMode?: ClaudeCodePermissionMode;
   };
 }
 
@@ -82,6 +89,10 @@ export function loadConfig(): Config {
         maxTurns: process.env.CLAUDE_CODE_MAX_TURNS
           ? parseInt(process.env.CLAUDE_CODE_MAX_TURNS, 10)
           : undefined,
+        permissionMode:
+          (process.env.CLAUDE_CODE_PERMISSION_MODE as
+            | ClaudeCodePermissionMode
+            | undefined) || "bypassPermissions",
       },
     },
   };

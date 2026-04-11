@@ -10,20 +10,29 @@ import type {
 
 const log = createLogger("claude-code");
 
+export type ClaudeCodePermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "plan"
+  | "bypassPermissions";
+
 export class ClaudeCodeBackend implements AgentBackend {
   readonly name = "claude-code";
   private executablePath: string;
   private defaultModel?: string;
   private defaultMaxTurns?: number;
+  private permissionMode: ClaudeCodePermissionMode;
 
   constructor(opts?: {
     path?: string;
     model?: string;
     maxTurns?: number;
+    permissionMode?: ClaudeCodePermissionMode;
   }) {
     this.executablePath = opts?.path || "claude";
     this.defaultModel = opts?.model;
     this.defaultMaxTurns = opts?.maxTurns;
+    this.permissionMode = opts?.permissionMode || "bypassPermissions";
   }
 
   async isAvailable(): Promise<boolean> {
@@ -92,6 +101,8 @@ export class ClaudeCodeBackend implements AgentBackend {
       "--output-format",
       "stream-json",
       "--verbose",
+      "--permission-mode",
+      this.permissionMode,
     ];
 
     const model = opts.model || this.defaultModel;

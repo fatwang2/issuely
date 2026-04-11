@@ -20,6 +20,7 @@ async function main() {
       path: config.agents.claudeCode?.path,
       model: config.agents.claudeCode?.model,
       maxTurns: config.agents.claudeCode?.maxTurns,
+      permissionMode: config.agents.claudeCode?.permissionMode,
     })
   );
 
