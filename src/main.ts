@@ -9,7 +9,7 @@ import { createLogger } from "./util/logger";
 const log = createLogger("main");
 
 async function main() {
-  log.info("Starting Kanban Agent Bridge...");
+  log.info("Starting Issuely...");
 
   // 1. Load configuration
   const config = loadConfig();
@@ -67,7 +67,7 @@ async function main() {
   // 6. Start listening
   await linear.start();
 
-  log.info("Kanban Agent Bridge is running!");
+  log.info("Issuely is running!");
   log.info(`  OAuth:   ${config.linear.baseUrl}/oauth/authorize`);
   log.info(`  Webhook: ${config.linear.baseUrl}/webhook`);
   log.info(`  Health:  http://localhost:${config.linear.port}/`);

@@ -1,6 +1,6 @@
-# Kanban Agent Bridge
+# Issuely
 
-Bridge between kanban tools (Linear, GitHub Issues, Jira) and local AI agents (Claude Code, Codex CLI).
+Bridge between issue trackers (Linear, GitHub Issues, Jira) and local AI agents (Claude Code, Codex CLI).
 
 **Core idea:** @mention an agent in a Linear issue, it runs locally using your existing subscription, and posts results back as a comment.
 
@@ -40,22 +40,22 @@ Three layers:
    cloudflared tunnel login
 
    # Create a tunnel (one-time)
-   cloudflared tunnel create kanban-bridge
+   cloudflared tunnel create issuely
 
    # Configure the tunnel to point to localhost:3010
    # Add to ~/.cloudflared/config.yml:
    #   tunnel: <TUNNEL_ID>
    #   credentials-file: ~/.cloudflared/credentials/<TUNNEL_ID>.json
    #   ingress:
-   #     - hostname: kanban-bridge.yourdomain.com
+   #     - hostname: issuely.yourdomain.com
    #       service: http://localhost:3010
    #     - service: http_status:404
 
    # Route DNS (one-time)
-   cloudflared tunnel route dns kanban-bridge kanban-bridge.yourdomain.com
+   cloudflared tunnel route dns issuely issuely.yourdomain.com
 
    # Start the tunnel
-   cloudflared tunnel run kanban-bridge
+   cloudflared tunnel run issuely
    ```
 
    Or for quick testing without a domain:
@@ -66,15 +66,15 @@ Three layers:
 3. **Create a Linear OAuth application:**
    - Go to https://linear.app/settings/api/applications
    - Create a new application
-   - Set redirect URL to `https://kanban-bridge.yourdomain.com/oauth/callback`
+   - Set redirect URL to `https://issuely.yourdomain.com/oauth/callback`
    - Subscribe to **Agent session** webhook events
-   - Set webhook URL to `https://kanban-bridge.yourdomain.com/webhook`
+   - Set webhook URL to `https://issuely.yourdomain.com/webhook`
 
 4. **Configure environment:**
    ```bash
    cp .env.example .env
    # Edit .env with your credentials
-   # Set BASE_URL=https://kanban-bridge.yourdomain.com
+   # Set BASE_URL=https://issuely.yourdomain.com
    ```
 
 5. **Start the bridge:**

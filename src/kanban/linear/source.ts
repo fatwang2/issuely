@@ -57,7 +57,7 @@ export class LinearSource implements KanbanSource {
         const url = new URL(req.url);
 
         if (req.method === "GET" && url.pathname === "/") {
-          return new Response("Kanban Agent Bridge is running", {
+          return new Response("Issuely is running", {
             status: 200,
           });
         }

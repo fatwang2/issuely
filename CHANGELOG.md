@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [0.1.0] — 2026-04-11
 
-First public release of **Kanban Agent Bridge**. @mention your Claude
+First public release of **Issuely**. @mention your Claude
 Code agent in a Linear issue and it runs locally against the repo you
 map that issue to — streaming thinking, tool use, a live plan
 checklist, and final results back into the Linear agent thread.
