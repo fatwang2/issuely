@@ -92,7 +92,7 @@ export class LinearSource implements KanbanSource {
       return;
     }
 
-    const tokens = getTokens(task.organizationId);
+    const tokens = await this.getValidTokens(task.organizationId);
     if (!tokens) {
       log.error("Cannot post update: no tokens", {
         organizationId: task.organizationId,
@@ -177,7 +177,7 @@ export class LinearSource implements KanbanSource {
       return;
     }
 
-    const tokens = getTokens(task.organizationId);
+    const tokens = await this.getValidTokens(task.organizationId);
     if (!tokens) {
       log.error("Cannot update plan: no tokens", {
         organizationId: task.organizationId,
@@ -236,11 +236,18 @@ export class LinearSource implements KanbanSource {
     }
   }
 
+  private async getValidTokens(organizationId: string) {
+    const tokens = await refreshAccessToken(organizationId, this.config);
+    if (tokens) return tokens;
+    // refresh_token missing or refresh failed — fall back to stored token
+    return getTokens(organizationId) ?? null;
+  }
+
   private async fetchIssueProject(
     issueId: string,
     organizationId: string
   ): Promise<{ id?: string; name: string } | null> {
-    const tokens = getTokens(organizationId);
+    const tokens = await this.getValidTokens(organizationId);
     if (!tokens) {
       log.warn("Cannot fetch issue project: no tokens", { organizationId });
       return null;

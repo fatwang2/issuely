@@ -21,7 +21,11 @@ export function verifyWebhookSignature(
   hmac.update(body);
   const expected = hmac.digest("hex");
 
-  return signature === expected;
+  if (signature !== expected) {
+    log.warn("Webhook signature mismatch");
+    return false;
+  }
+  return true;
 }
 
 export interface AgentSessionPayload {
