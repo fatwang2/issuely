@@ -114,6 +114,13 @@ all follow-up fixes and feature work.
 - **Duplicate replies** on webhook retries: sessions were sometimes
   processed twice when Linear retried a delivery (fix from an earlier
   iteration, carried forward).
+- **Linear OAuth tokens now auto-refresh on outgoing API calls**.
+  `postUpdate`, `updateSessionPlan`, and `fetchIssueProject` route
+  through a `getValidTokens` helper that tries `refreshAccessToken`
+  first and falls back to the stored token, so long-running bridges
+  don't start silently failing once the initial access token expires.
+  Webhook signature mismatches are also logged as warnings instead of
+  returning a bare `false`.
 - **`tsc --noEmit` passes cleanly** across all modules.
 
 ### Known limitations
