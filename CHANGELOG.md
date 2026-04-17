@@ -120,7 +120,7 @@ first and falls back to the stored token, so long-running bridges
 don't start silently failing once the initial access token expires.
 Webhook signature mismatches are also logged as warnings instead of
 returning a bare `false`.
-- **`tsc --noEmit`** passes cleanly across all modules.
+- **Type-check passes** — `tsc --noEmit` runs cleanly across all modules.
 
 ### Known limitations
 
@@ -131,7 +131,8 @@ genuinely parallelizable.
 JSON shape currently matches Linear's public docs, but may change.
 If it does, `LinearSource.updateSessionPlan` is the single update
 point.
-- **`claude -p`** is one-shot, so requests that try to launch a
-long-running local dev server will hang until the task timeout. Use
-the stop button (it now works) or avoid asking for persistent
-processes via the bridge.
+- **Claude's headless mode is one-shot** — `claude -p` will hang on
+requests that try to launch a long-running local dev server until the
+task timeout. Use the stop button (it now works) or avoid asking for
+persistent processes via the bridge.
+
