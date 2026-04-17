@@ -2,7 +2,7 @@ import { homedir } from "os";
 import { loadConfig } from "./config";
 import { ClaudeCodeBackend } from "./agents/claude-code";
 import { AgentRegistry } from "./agents/registry";
-import { LinearSource } from "./kanban/linear/source";
+import { LinearSource } from "./issue-tracker/linear/source";
 import { TaskDispatcher } from "./dispatcher/dispatcher";
 import { createLogger } from "./util/logger";
 
@@ -47,14 +47,14 @@ async function main() {
   }
   log.info(`Available agents: ${available.join(", ")}`);
 
-  // 3. Set up kanban sources
+  // 3. Set up issue-tracker sources
   const linear = new LinearSource(config.linear);
   const sources = new Map([["linear", linear as any]]);
 
   // 4. Set up dispatcher
   const dispatcher = new TaskDispatcher(agents, sources, config.dispatcher);
 
-  // 5. Wire: kanban events -> dispatcher
+  // 5. Wire: issue-tracker events -> dispatcher
   linear.onTaskRequest((task) => {
     dispatcher.dispatch(task).catch((e) => {
       log.error("Dispatch failed", { error: String(e), taskId: task.id });

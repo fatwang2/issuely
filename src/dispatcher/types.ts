@@ -1,4 +1,4 @@
-import type { TaskRequest } from "../kanban/types";
+import type { TaskRequest } from "../issue-tracker/types";
 import type { AgentResult } from "../agents/types";
 
 export type TaskStatus = "queued" | "running" | "completed" | "failed";

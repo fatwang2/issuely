@@ -3,7 +3,7 @@ import { v4 as uuid } from "uuid";
 import type { LinearConfig } from "../../config";
 import { createLogger } from "../../util/logger";
 import type {
-  KanbanSource,
+  IssueTrackerSource,
   PlanItem,
   StopSignal,
   TaskRequest,
@@ -25,7 +25,7 @@ import {
 
 const log = createLogger("linear-source");
 
-export class LinearSource implements KanbanSource {
+export class LinearSource implements IssueTrackerSource {
   readonly name = "linear";
   private config: LinearConfig;
   private server: ReturnType<typeof Bun.serve> | null = null;

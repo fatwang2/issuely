@@ -38,7 +38,7 @@ export interface PlanItem {
   status: PlanItemStatus;
 }
 
-export interface KanbanSource {
+export interface IssueTrackerSource {
   readonly name: string;
   start(): Promise<void>;
   onTaskRequest(handler: (task: TaskRequest) => void): void;

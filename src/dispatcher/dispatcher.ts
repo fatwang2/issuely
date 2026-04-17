@@ -2,12 +2,12 @@ import type { AgentRegistry } from "../agents/registry";
 import type { AgentSession } from "../agents/types";
 import type { DispatcherConfig } from "../config";
 import type {
-  KanbanSource,
+  IssueTrackerSource,
   PlanItem,
   PlanItemStatus,
   StopSignal,
   TaskRequest,
-} from "../kanban/types";
+} from "../issue-tracker/types";
 import { createLogger } from "../util/logger";
 import type { Task } from "./types";
 
@@ -48,12 +48,12 @@ export class TaskDispatcher {
   private queue: TaskRequest[] = [];
   private sessions: Map<string, string> = new Map(); // issueId -> agentSessionId (for resume)
   private lastProgressTime: Map<string, number> = new Map();
-  // Running agent sessions keyed by kanban session ID (for abort)
+  // Running agent sessions keyed by issue-tracker session ID (for abort)
   private runningSessions: Map<string, AgentSession> = new Map();
 
   constructor(
     private agents: AgentRegistry,
-    private sources: Map<string, KanbanSource>,
+    private sources: Map<string, IssueTrackerSource>,
     private config: DispatcherConfig
   ) {}
 
@@ -237,7 +237,7 @@ export class TaskDispatcher {
 
   private async throttledUpdate(
     request: TaskRequest,
-    source: KanbanSource,
+    source: IssueTrackerSource,
     update: { type: "thinking" | "progress"; content: string }
   ): Promise<void> {
     const now = Date.now();
