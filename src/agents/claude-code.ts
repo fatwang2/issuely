@@ -49,11 +49,12 @@ export class ClaudeCodeBackend implements AgentBackend {
   }
 
   execute(prompt: string, opts: ExecOptions): AgentSession {
-    const args = this.buildArgs(prompt, opts);
+    const args = this.buildArgs(opts);
     log.info("Starting Claude Code", { cwd: opts.cwd, args });
 
     const proc = spawn(args, {
       cwd: opts.cwd,
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
       env: {
@@ -61,6 +62,13 @@ export class ClaudeCodeBackend implements AgentBackend {
         // Disable interactive prompts
         DISABLE_INTERACTIVITY: "1",
       },
+    });
+
+    // Feed the prompt via stdin as a stream-json user message. Avoids shell
+    // escaping issues with long/multiline/backticked content from webhook
+    // payloads (Linear comments frequently contain code fences and quotes).
+    this.writePromptToStdin(proc, prompt).catch((e) => {
+      log.error("Failed to write prompt to stdin", { error: String(e) });
     });
 
     const startTime = Date.now();
@@ -93,14 +101,22 @@ export class ClaudeCodeBackend implements AgentBackend {
     };
   }
 
-  private buildArgs(prompt: string, opts: ExecOptions): string[] {
+  private buildArgs(opts: ExecOptions): string[] {
     const args = [
       this.executablePath,
+      // `-p` enables non-interactive (headless) mode. The prompt itself is
+      // fed via stdin using --input-format stream-json below.
       "-p",
-      prompt,
+      "--input-format",
+      "stream-json",
       "--output-format",
       "stream-json",
       "--verbose",
+      // Only load MCP servers from the daemon's explicit --mcp-config (none,
+      // in our case). Prevents the user's global ~/.claude.json MCPs (e.g.
+      // a Linear MCP) from being auto-loaded, which would let the agent
+      // post to Linear directly and duplicate the bridge's output.
+      "--strict-mcp-config",
       "--permission-mode",
       this.permissionMode,
     ];
@@ -116,7 +132,9 @@ export class ClaudeCodeBackend implements AgentBackend {
     }
 
     if (opts.systemPrompt) {
-      args.push("--system-prompt", opts.systemPrompt);
+      // Append, do NOT replace. Replacing would wipe Claude Code's default
+      // system prompt (tool conventions, CLAUDE.md loading, skills, etc.).
+      args.push("--append-system-prompt", opts.systemPrompt);
     }
 
     if (opts.resumeSessionId) {
@@ -124,6 +142,30 @@ export class ClaudeCodeBackend implements AgentBackend {
     }
 
     return args;
+  }
+
+  private async writePromptToStdin(
+    proc: Subprocess,
+    prompt: string
+  ): Promise<void> {
+    const stdin = proc.stdin as unknown as
+      | { write(data: string | Uint8Array): number | Promise<number>; end(): void }
+      | null;
+    if (!stdin) {
+      throw new Error("claude subprocess has no stdin");
+    }
+    const payload = {
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: prompt }],
+      },
+    };
+    try {
+      await stdin.write(JSON.stringify(payload) + "\n");
+    } finally {
+      stdin.end();
+    }
   }
 
   private createStreams(

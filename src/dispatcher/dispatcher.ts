@@ -129,13 +129,17 @@ export class TaskDispatcher {
     }
 
     try {
-      const systemPrompt = [
-        "You are an agent executing a task from a kanban board.",
-        "Do NOT interact with Linear, Jira, or any project management tool directly.",
-        "Do NOT use Linear MCP tools to read issues, post comments, or update statuses.",
-        "Your output will be automatically posted back to the kanban board by the bridge system.",
-        "Focus only on the task described in the prompt.",
-      ].join(" ");
+      // Only inject the system prompt on the first turn. On --resume the
+      // original session already carries these constraints, and appending
+      // them again every follow-up just wastes tokens and risks confusing
+      // the model about whether a new task has started.
+      const systemPrompt = resumeSessionId
+        ? undefined
+        : [
+            "You run inside a bridge that relays your output to an external issue tracker (Linear/Jira/GitHub).",
+            "The bridge handles all posting back — never call any issue-tracker MCP or API yourself.",
+            "Focus only on the task described in the user prompt.",
+          ].join(" ");
 
       const session = agent.execute(request.prompt, {
         cwd,
