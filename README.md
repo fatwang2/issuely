@@ -2,32 +2,35 @@
 
 English | [简体中文](README.zh-CN.md)
 
-**Make Claude Code a member of your Linear team.**
+**Make Claude Code or Codex a member of your Linear team.**
 
-@mention it on a Linear issue to assign a task. It runs on your local Claude Code subscription, discusses the problem with you, edits code in your local repo, and posts the result back as a comment when it's done.
+@mention it on a Linear issue to assign a task. It runs on your local Claude Code or Codex subscription, discusses the problem with you, edits code in your local repo, and posts the result back as a comment when it's done.
 
 - **No new project management tool**: keep using your existing Linear — no new platform, no migration cost
-- **Subscription, not API**: runs on the Claude Code you're already logged into locally, drawing from your Pro / Max quota — no API key required
+- **Subscription, not API**: runs on the Claude Code (Pro / Max) or Codex (ChatGPT Plus / Pro / Team) you're already logged into locally — no API key required
+- **Swap agents in one line**: set `DEFAULT_AGENT=claude-code` or `DEFAULT_AGENT=codex`; both backends share the same dispatcher, plan-sync, stop-signal, and session-resume plumbing
 - **Fully local execution**: the agent touches code on your own machine; sessions, permissions, and files stay with you
 
 ## Architecture
 
 ```
-Linear (webhook) → Issuely Bridge → Local Claude Code → Linear (comment)
+Linear (webhook) → Issuely Bridge → Claude Code / Codex (local) → Linear (comment)
 ```
 
 Three layers:
 
 - **Issue Tracker Adapter** — currently Linear: listens to webhooks, normalizes events into TaskRequests
 - **Task Dispatcher** — queues tasks, controls concurrency, forwards progress updates
-- **Agent Adapter** — currently Claude Code CLI: spawns the subprocess, streams output back
+- **Agent Adapter** — Claude Code CLI or Codex (via [`@openai/codex-sdk`](https://www.npmjs.com/package/@openai/codex-sdk), which bundles the Rust `codex` binary per platform): spawns the agent, streams output back
 
 ## Quick Start
 
 ### Prerequisites
 
 - [Bun](https://bun.sh) runtime
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and logged in
+- At least one local agent logged in:
+  - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude login`), and/or
+  - [Codex CLI](https://github.com/openai/codex) (`codex login`) — the bundled binary is installed automatically via `@openai/codex-sdk`
 - A Linear workspace (admin access required to set up the OAuth app)
 - A public URL reachable by Linear — [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) is recommended
 
@@ -89,11 +92,11 @@ Three layers:
 @mention your agent app in any Linear issue. Issuely Bridge will:
 
 1. Receive the webhook event
-2. Dispatch the task to Claude Code CLI
+2. Dispatch the task to the configured agent (Claude Code or Codex)
 3. Stream progress (thinking, tool use, plan) back to Linear
 4. Post the final result as a response activity
 
-Follow-up replies in the same thread automatically resume the previous Claude Code session via `--resume`, so context is preserved.
+Follow-up replies in the same thread automatically resume the previous session (`claude --resume` or `codex.resumeThread()`), so context is preserved.
 
 ### Project Directory Mapping
 
@@ -104,6 +107,15 @@ PROJECT_DIRS=DesignSystem=/Users/you/repos/ds,Website=/Users/you/repos/web
 ```
 
 The key is the **Linear project name**, case-insensitive.
+
+### Choosing the Agent Backend
+
+Set `DEFAULT_AGENT` in `.env`:
+
+- `claude-code` (default) — drives Claude Code CLI
+- `codex` — drives Codex via `@openai/codex-sdk`
+
+Both backends are registered at startup and detected independently; an unavailable backend is logged as a warning but doesn't block the other.
 
 ### Claude Code Permission Mode
 
@@ -119,6 +131,19 @@ Issuely Bridge runs Claude Code CLI non-interactively, so it passes `--permissio
 
 
 **Default: `bypassPermissions`**, since Issuely Bridge is non-interactive anyway. Switch to `acceptEdits` for a safer middle ground.
+
+### Codex Approval Policy & Sandbox
+
+Codex is also driven non-interactively. Configure via `.env`:
+
+| Variable                | Values                                                                   | Default             |
+| ----------------------- | ------------------------------------------------------------------------ | ------------------- |
+| `CODEX_APPROVAL_POLICY` | `never` / `on-request` / `on-failure` / `untrusted`                      | `never`             |
+| `CODEX_SANDBOX_MODE`    | `read-only` / `workspace-write` / `danger-full-access`                   | `workspace-write`   |
+| `CODEX_MODEL`           | Any model accepted by your Codex CLI                                     | CLI default         |
+| `CODEX_API_KEY`         | Set to bypass ChatGPT-subscription OAuth and use a pay-as-you-go API key | unset (uses OAuth)  |
+
+`never` matches Claude Code's `bypassPermissions` — anything stricter will stall the webhook flow since no TTY is available to answer approval prompts. Per-tool runtime callbacks (`canUseTool`) aren't exposed by the Codex SDK today; use `~/.codex/hooks.json` `PreToolUse` hooks if you need a gate.
 
 ## Development
 

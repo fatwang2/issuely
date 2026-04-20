@@ -4,6 +4,80 @@ All notable changes to this project are documented in this file. The
 format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.0](https://github.com/fatwang2/kanban/releases/tag/v0.2.0) — 2026-04-20
+
+Issuely now speaks **Codex** as well as Claude Code. Same bridge, same
+Linear thread, same plan checklist — pick your agent with a single
+environment variable.
+
+### Highlights
+
+- **Codex backend** via [`@openai/codex-sdk`](https://www.npmjs.com/package/@openai/codex-sdk),
+which bundles the Rust `codex` binary per platform. Runs on your
+local `codex login` — your ChatGPT Plus / Pro / Team subscription,
+no API key needed.
+- **One-variable agent switch**: `DEFAULT_AGENT=claude-code` or
+`DEFAULT_AGENT=codex`. Both backends are registered at startup and
+probed independently; an unavailable backend is logged and skipped.
+- **Shared machinery**: plan-sync, stop signals, session resume,
+workdir mapping, OAuth token refresh — every behavior that already
+worked for Claude Code works for Codex with no extra code.
+
+### Added
+
+- **`CodexBackend`** (`src/agents/codex.ts`) implementing the existing
+`AgentBackend` interface. Maps Codex `ThreadEvent` / `ThreadItem`
+onto the canonical `AgentMessage` union:
+  - `agent_message` → `text`
+  - `reasoning` → `thinking`
+  - `command_execution` → `tool_use` (`Bash`)
+  - `file_change` → `tool_use` (`Edit` / `MultiEdit`)
+  - `mcp_tool_call` → `tool_use` (`mcp:<server>:<tool>`)
+  - `web_search` → `tool_use` (`WebSearch`)
+  - `todo_list` → `tool_use` (`TodoWrite`) — deliberately matching
+    Claude Code's shape so the dispatcher's existing
+    `parseTodoWritePlan` syncs Codex plans to Linear without knowing
+    which backend produced them.
+  - `error` → `error`
+- **Session resume for Codex** via `codex.resumeThread(threadId)`;
+`thread.started` events are captured and returned as `AgentResult.sessionId`,
+so follow-up replies continue the same Codex thread the same way
+Claude Code sessions already do.
+- **Codex configuration** via new env vars: `CODEX_API_KEY`,
+`CODEX_PATH`, `CODEX_MODEL`, `CODEX_APPROVAL_POLICY`
+(`never` / `on-request` / `on-failure` / `untrusted`),
+`CODEX_SANDBOX_MODE` (`read-only` / `workspace-write` /
+`danger-full-access`). Approval defaults to `never` to match
+Claude Code's `bypassPermissions` — anything stricter would stall
+without a TTY.
+- **Abort wiring**: the `AgentSession.abort()` path threads into an
+`AbortController` passed to `thread.runStreamed({ signal })`, so the
+Linear stop button kills in-flight Codex turns the same way it kills
+Claude Code subprocesses.
+
+### Changed
+
+- **`isAvailable()` switched to dynamic `import()`** under Bun —
+`require.resolve` returns module-not-found for workspace packages in
+the ESM loader, which caused Codex to be marked unavailable even
+when the SDK and binary were installed.
+- **README / README.zh-CN**: updated tagline, prerequisites,
+architecture diagram, and a new section documenting the Codex
+approval policy and sandbox modes.
+
+### Known limitations
+
+- **No `canUseTool` callback on Codex**. The SDK exposes approval
+policies and sandbox modes but not per-tool runtime interception.
+For a programmatic gate, use Codex's `~/.codex/hooks.json`
+`PreToolUse` hook (external command, exit code decides).
+- **ChatGPT subscription rate limits**. Bursty webhook traffic can
+hit per-hour / per-day caps; fall back to `CODEX_API_KEY` for
+pay-as-you-go if that becomes an issue.
+- **No `--append-system-prompt` on Codex**. Issuely inlines its
+guardrail system prompt into the user prompt on the first turn; this
+costs a handful of extra input tokens per new session.
+
 ## [0.1.0](https://github.com/fatwang2/kanban/releases/tag/v0.1.0) — 2026-04-11
 
 First public release of **Issuely**. @mention your Claude
