@@ -22,6 +22,17 @@ export type ClaudeCodePermissionMode =
   | "plan"
   | "bypassPermissions";
 
+export type CodexApprovalMode =
+  | "never"
+  | "on-request"
+  | "on-failure"
+  | "untrusted";
+
+export type CodexSandboxMode =
+  | "read-only"
+  | "workspace-write"
+  | "danger-full-access";
+
 export interface AgentConfig {
   defaultAgent?: string;
   claudeCode?: {
@@ -29,6 +40,13 @@ export interface AgentConfig {
     model?: string;
     maxTurns?: number;
     permissionMode?: ClaudeCodePermissionMode;
+  };
+  codex?: {
+    apiKey?: string;
+    codexPath?: string;
+    model?: string;
+    approvalPolicy?: CodexApprovalMode;
+    sandboxMode?: CodexSandboxMode;
   };
 }
 
@@ -93,6 +111,17 @@ export function loadConfig(): Config {
           (process.env.CLAUDE_CODE_PERMISSION_MODE as
             | ClaudeCodePermissionMode
             | undefined) || "bypassPermissions",
+      },
+      codex: {
+        apiKey: process.env.CODEX_API_KEY,
+        codexPath: process.env.CODEX_PATH,
+        model: process.env.CODEX_MODEL,
+        approvalPolicy:
+          (process.env.CODEX_APPROVAL_POLICY as CodexApprovalMode | undefined) ||
+          "never",
+        sandboxMode:
+          (process.env.CODEX_SANDBOX_MODE as CodexSandboxMode | undefined) ||
+          "workspace-write",
       },
     },
   };

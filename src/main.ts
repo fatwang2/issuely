@@ -1,6 +1,7 @@
 import { homedir } from "os";
 import { loadConfig } from "./config";
 import { ClaudeCodeBackend } from "./agents/claude-code";
+import { CodexBackend } from "./agents/codex";
 import { AgentRegistry } from "./agents/registry";
 import { LinearSource } from "./issue-tracker/linear/source";
 import { TaskDispatcher } from "./dispatcher/dispatcher";
@@ -37,11 +38,20 @@ async function main() {
       permissionMode: config.agents.claudeCode?.permissionMode,
     })
   );
+  agents.register(
+    new CodexBackend({
+      apiKey: config.agents.codex?.apiKey,
+      codexPath: config.agents.codex?.codexPath,
+      model: config.agents.codex?.model,
+      approvalPolicy: config.agents.codex?.approvalPolicy,
+      sandboxMode: config.agents.codex?.sandboxMode,
+    })
+  );
 
   const available = await agents.detectAvailable();
   if (available.length === 0) {
     log.error(
-      "No agents available! Make sure claude CLI is installed and on PATH."
+      "No agents available! Install the `claude` CLI and/or @openai/codex-sdk."
     );
     process.exit(1);
   }
