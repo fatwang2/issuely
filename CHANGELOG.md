@@ -4,6 +4,79 @@ All notable changes to this project are documented in this file. The
 format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.0](https://github.com/fatwang2/kanban/releases/tag/v0.3.0) — 2026-05-02
+
+Issuely now speaks **Cursor** alongside Claude Code and Codex. Same
+bridge, same Linear thread, same plan checklist — pick your agent with
+a single environment variable.
+
+### Highlights
+
+- **Cursor backend** via the standalone [`cursor-agent` CLI](https://cursor.com/docs/cli)
+in `--print --output-format stream-json` mode. Authentication is
+handled by the CLI itself — `cursor-agent login` (OAuth, recommended)
+or `CURSOR_API_KEY` fallback.
+- **Three-way agent switch**: `DEFAULT_AGENT=claude-code`, `codex`,
+or `cursor`. All three backends are registered at startup and probed
+independently.
+- **Subscription billing**: OAuth login ties the CLI to your Cursor
+account, so usage draws from your Pro subscription's included quota
+before any pay-as-you-go charges.
+
+### Added
+
+- **`CursorBackend`** (`src/agents/cursor.ts`) implementing the
+existing `AgentBackend` interface. Spawns `cursor-agent` as a
+subprocess and parses its stream-json stdout, matching the
+`ClaudeCodeBackend` pattern. Event mapping:
+  - `assistant.message.content[].text` → `text`
+  - `tool_call` (started) → `tool_use`, with `read` → `Read`,
+    `edit`/`write` → `Edit` / `Write`, `shell` → `Bash`,
+    `updateTodos` → `TodoWrite`, `grep` / `glob` / `ls` /
+    `semSearch` / `task` / `mcp` mapped to their Claude Code
+    equivalents. The `TodoWrite` mapping converts
+    `TODO_STATUS_PENDING / IN_PROGRESS / COMPLETED` to Claude Code's
+    `pending / in_progress / completed` and synthesizes `activeForm`
+    so the dispatcher's `parseTodoWritePlan` syncs Cursor plans to
+    Linear without knowing the source backend.
+  - `result.is_error` → `failed` status on the resulting `AgentResult`
+- **Session resume for Cursor** via `cursor-agent --resume <session_id>`.
+The session_id is captured from `system.init` and `result` events
+and returned as `AgentResult.sessionId`.
+- **Cursor configuration** via new env vars: `CURSOR_AGENT_PATH`
+(override the default PATH lookup), `CURSOR_MODEL` (passed to
+`--model`). `CURSOR_API_KEY` is also respected, but the CLI itself
+reads it — Issuely no longer plumbs auth into the backend.
+- **Abort wiring**: `AgentSession.abort()` sends `SIGTERM` to the
+live `cursor-agent` subprocess so the Linear stop button kills
+in-flight Cursor turns.
+
+### Why CLI and not SDK
+
+The first cut of this backend used [`@cursor/sdk`](https://www.npmjs.com/package/@cursor/sdk),
+but it failed end to end under Bun: the SDK's local runtime talks
+to its embedded binary over connect-rpc/HTTP/2, which hits an
+unresolved bug in Bun's `node:http2` (`NGHTTP2_FRAME_SIZE_ERROR` —
+[oven-sh/bun#25589](https://github.com/oven-sh/bun/issues/25589) and
+related). The agent-side conversation streamed correctly, but every
+tool RPC silently failed, so the agent could chat but couldn't read
+or edit files. Switching to the CLI (subprocess + stdio) takes
+Bun's HTTP/2 stack out of the loop and makes tool execution work
+reliably, with the bonus of OAuth as the default auth path.
+
+### Known limitations
+
+- **No system prompt support.** Unlike Claude Code's
+`--append-system-prompt`, `cursor-agent` doesn't expose a
+system-prompt option. Issuely's guardrail prompt is dropped on
+Cursor turns; project-level context still loads from `.cursor/`
+rules in the working directory.
+- **Tool inventory differs from Claude Code.** Cursor exposes
+`semSearch`, `createPlan`, and `task` (subagent) tools that Claude
+Code doesn't, and vice versa. We map known tools by name and
+forward unknown ones with their CLI name as the tool label, so
+Linear surfaces them without crashing the parser.
+
 ## [0.2.0](https://github.com/fatwang2/kanban/releases/tag/v0.2.0) — 2026-04-20
 
 Issuely now speaks **Codex** as well as Claude Code. Same bridge, same

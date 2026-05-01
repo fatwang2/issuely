@@ -2,6 +2,7 @@ import { homedir } from "os";
 import { loadConfig } from "./config";
 import { ClaudeCodeBackend } from "./agents/claude-code";
 import { CodexBackend } from "./agents/codex";
+import { CursorBackend } from "./agents/cursor";
 import { AgentRegistry } from "./agents/registry";
 import { LinearSource } from "./issue-tracker/linear/source";
 import { TaskDispatcher } from "./dispatcher/dispatcher";
@@ -47,11 +48,17 @@ async function main() {
       sandboxMode: config.agents.codex?.sandboxMode,
     })
   );
+  agents.register(
+    new CursorBackend({
+      path: config.agents.cursor?.path,
+      model: config.agents.cursor?.model,
+    })
+  );
 
   const available = await agents.detectAvailable();
   if (available.length === 0) {
     log.error(
-      "No agents available! Install the `claude` CLI and/or @openai/codex-sdk."
+      "No agents available! Install the `claude` CLI, the `codex` CLI, or the `cursor-agent` CLI and log in."
     );
     process.exit(1);
   }

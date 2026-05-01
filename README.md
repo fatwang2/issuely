@@ -2,35 +2,36 @@
 
 English | [简体中文](README.zh-CN.md)
 
-**Make Claude Code or Codex a member of your Linear team.**
+**Make Claude Code, Codex, or Cursor a member of your Linear team.**
 
-@mention it on a Linear issue to assign a task. It runs on your local Claude Code or Codex subscription, discusses the problem with you, edits code in your local repo, and posts the result back as a comment when it's done.
+@mention it on a Linear issue to assign a task. It runs on your local agent (Claude Code, Codex, or Cursor), discusses the problem with you, edits code in your local repo, and posts the result back as a comment when it's done.
 
 - **No new project management tool**: keep using your existing Linear — no new platform, no migration cost
-- **Subscription, not API**: runs on the Claude Code (Pro / Max) or Codex (ChatGPT Plus / Pro / Team) you're already logged into locally — no API key required
-- **Swap agents in one line**: set `DEFAULT_AGENT=claude-code` or `DEFAULT_AGENT=codex`; both backends share the same dispatcher, plan-sync, stop-signal, and session-resume plumbing
+- **Subscription, not API**: runs on the Claude Code (Pro / Max), Codex (ChatGPT Plus / Pro / Team), or Cursor (Pro) you're already paying for — usage is billed against your subscription
+- **Swap agents in one line**: set `DEFAULT_AGENT=claude-code`, `codex`, or `cursor`; all backends share the same dispatcher, plan-sync, stop-signal, and session-resume plumbing
 - **Fully local execution**: the agent touches code on your own machine; sessions, permissions, and files stay with you
 
 ## Architecture
 
 ```
-Linear (webhook) → Issuely Bridge → Claude Code / Codex (local) → Linear (comment)
+Linear (webhook) → Issuely Bridge → Claude Code / Codex / Cursor (local) → Linear (comment)
 ```
 
 Three layers:
 
 - **Issue Tracker Adapter** — currently Linear: listens to webhooks, normalizes events into TaskRequests
 - **Task Dispatcher** — queues tasks, controls concurrency, forwards progress updates
-- **Agent Adapter** — Claude Code CLI or Codex (via [`@openai/codex-sdk`](https://www.npmjs.com/package/@openai/codex-sdk), which bundles the Rust `codex` binary per platform): spawns the agent, streams output back
+- **Agent Adapter** — Claude Code CLI, Codex (via [`@openai/codex-sdk`](https://www.npmjs.com/package/@openai/codex-sdk), which bundles the Rust `codex` binary per platform), or [Cursor CLI](https://cursor.com/docs/cli) (`cursor-agent` in `--print` mode): spawns the agent, streams output back
 
 ## Quick Start
 
 ### Prerequisites
 
 - [Bun](https://bun.sh) runtime
-- At least one local agent logged in:
+- At least one agent set up:
   - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude login`), and/or
-  - [Codex CLI](https://github.com/openai/codex) (`codex login`) — the bundled binary is installed automatically via `@openai/codex-sdk`
+  - [Codex CLI](https://github.com/openai/codex) (`codex login`) — the bundled binary is installed automatically via `@openai/codex-sdk`, and/or
+  - [Cursor CLI](https://cursor.com/docs/cli) (`cursor-agent login`) — uses your Cursor subscription via OAuth; usage is billed against the logged-in account
 - A Linear workspace (admin access required to set up the OAuth app)
 - A public URL reachable by Linear — [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) is recommended
 
@@ -92,11 +93,11 @@ Three layers:
 @mention your agent app in any Linear issue. Issuely Bridge will:
 
 1. Receive the webhook event
-2. Dispatch the task to the configured agent (Claude Code or Codex)
+2. Dispatch the task to the configured agent (Claude Code, Codex, or Cursor)
 3. Stream progress (thinking, tool use, plan) back to Linear
 4. Post the final result as a response activity
 
-Follow-up replies in the same thread automatically resume the previous session (`claude --resume` or `codex.resumeThread()`), so context is preserved.
+Follow-up replies in the same thread automatically resume the previous session (`claude --resume`, `codex.resumeThread()`, or `cursor-agent --resume`), so context is preserved.
 
 ### Project Directory Mapping
 
@@ -114,8 +115,9 @@ Set `DEFAULT_AGENT` in `.env`:
 
 - `claude-code` (default) — drives Claude Code CLI
 - `codex` — drives Codex via `@openai/codex-sdk`
+- `cursor` — drives the Cursor CLI (`cursor-agent`)
 
-Both backends are registered at startup and detected independently; an unavailable backend is logged as a warning but doesn't block the other.
+All backends are registered at startup and detected independently; an unavailable backend is logged as a warning but doesn't block the others.
 
 ### Claude Code Permission Mode
 
@@ -144,6 +146,20 @@ Codex is also driven non-interactively. Configure via `.env`:
 | `CODEX_API_KEY`         | Set to bypass ChatGPT-subscription OAuth and use a pay-as-you-go API key | unset (uses OAuth)  |
 
 `never` matches Claude Code's `bypassPermissions` — anything stricter will stall the webhook flow since no TTY is available to answer approval prompts. Per-tool runtime callbacks (`canUseTool`) aren't exposed by the Codex SDK today; use `~/.codex/hooks.json` `PreToolUse` hooks if you need a gate.
+
+### Cursor
+
+Cursor runs via the [`cursor-agent` CLI](https://cursor.com/docs/cli) in `--print --output-format stream-json` mode. Authentication is handled by the CLI itself — run `cursor-agent login` once for OAuth (recommended), or set `CURSOR_API_KEY` to use a dashboard API key. The bridge launches the CLI with `--force --trust` so tool execution proceeds without permission prompts (no TTY is available under webhook flow).
+
+| Variable             | Values                                                   | Default              |
+| -------------------- | -------------------------------------------------------- | -------------------- |
+| `CURSOR_AGENT_PATH`  | Path to the `cursor-agent` binary                        | `cursor-agent` on PATH |
+| `CURSOR_MODEL`       | Any model accepted by your Cursor account                | CLI default          |
+| `CURSOR_API_KEY`     | (Optional) API key fallback if you haven't run `login`   | unset (uses OAuth)   |
+
+Sessions resume via `cursor-agent --resume <session_id>`, mirroring Claude Code's `--resume` flow.
+
+> **Note:** the [`@cursor/sdk`](https://www.npmjs.com/package/@cursor/sdk) TypeScript SDK is **not** used. Its local runtime talks to its embedded binary over connect-rpc/HTTP/2, which currently fails under Bun ([oven-sh/bun#25589](https://github.com/oven-sh/bun/issues/25589) and related). The CLI uses plain stdio, so Bun stays out of the protocol critical path.
 
 ## Development
 

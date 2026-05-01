@@ -1,6 +1,6 @@
 {
   "name": "issuely",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "module": "src/main.ts",
   "type": "module",
   "private": true,

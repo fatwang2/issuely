@@ -48,6 +48,10 @@ export interface AgentConfig {
     approvalPolicy?: CodexApprovalMode;
     sandboxMode?: CodexSandboxMode;
   };
+  cursor?: {
+    path?: string;
+    model?: string;
+  };
 }
 
 export interface Config {
@@ -122,6 +126,10 @@ export function loadConfig(): Config {
         sandboxMode:
           (process.env.CODEX_SANDBOX_MODE as CodexSandboxMode | undefined) ||
           "workspace-write",
+      },
+      cursor: {
+        path: process.env.CURSOR_AGENT_PATH,
+        model: process.env.CURSOR_MODEL,
       },
     },
   };
