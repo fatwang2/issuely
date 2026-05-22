@@ -3,6 +3,7 @@ import { loadConfig } from "./config";
 import { ClaudeCodeBackend } from "./agents/claude-code";
 import { CodexBackend } from "./agents/codex";
 import { CursorBackend } from "./agents/cursor";
+import { AntigravityBackend } from "./agents/antigravity";
 import { AgentRegistry } from "./agents/registry";
 import { LinearSource } from "./issue-tracker/linear/source";
 import { TaskDispatcher } from "./dispatcher/dispatcher";
@@ -54,11 +55,17 @@ async function main() {
       model: config.agents.cursor?.model,
     })
   );
+  agents.register(
+    new AntigravityBackend({
+      path: config.agents.antigravity?.path,
+      model: config.agents.antigravity?.model,
+    })
+  );
 
   const available = await agents.detectAvailable();
   if (available.length === 0) {
     log.error(
-      "No agents available! Install the `claude` CLI, the `codex` CLI, or the `cursor-agent` CLI and log in."
+      "No agents available! Install the `claude` CLI, the `codex` CLI, the `cursor-agent` CLI, or the `agy` (Antigravity) CLI and log in."
     );
     process.exit(1);
   }
