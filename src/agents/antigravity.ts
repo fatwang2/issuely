@@ -12,15 +12,15 @@ const log = createLogger("antigravity");
 
 /**
  * Antigravity backend driven by Google's `agy` CLI (the Go rewrite of
- * Gemini CLI shipped on 2026-05-19) in headless mode with
- * `-p "<prompt>" --output-format stream-json`.
+ * Gemini CLI shipped on 2026-05-19) in headless mode with `-p "<prompt>"`.
+ *
+ * agy v1.0.0 does NOT expose a stream-json output mode (no `--format` /
+ * `--output-format` flag) — `--print` just emits the final assistant
+ * response as plain text on stdout. We therefore stream stdout as text
+ * chunks and surface a single text AgentMessage, with no tool_use events.
  *
  * The CLI handles auth itself via OS keyring (Google Sign-In) or
- * `ANTIGRAVITY_API_KEY`; we just spawn the process and parse its stdout.
- * Same shape as `cursor.ts` — only the event vocabulary differs.
- *
- * stream-json event types per the headless reference:
- *   init | message | tool_use | tool_result | error | result
+ * `ANTIGRAVITY_API_KEY`; we just spawn the process and read stdout.
  */
 export class AntigravityBackend implements AgentBackend {
   readonly name = "antigravity";
@@ -94,27 +94,22 @@ export class AntigravityBackend implements AgentBackend {
   }
 
   private buildArgs(prompt: string, opts: ExecOptions): string[] {
+    // agy v1.0.0 flags (verified via `agy --help`):
+    //   -p / --print                       single-prompt non-interactive mode
+    //   --dangerously-skip-permissions     auto-approve tool calls (no TTY)
+    //   --conversation <id>                resume a previous conversation
+    // There is no --output-format / --format / --model flag yet.
     const args = [
       this.executablePath,
-      "-p",
-      prompt,
-      "--output-format",
-      "stream-json",
-      // No TTY in webhook context, so the agent must not block on
-      // tool-approval prompts. `--yolo` (inherited from Gemini CLI) is the
-      // documented "auto-accept everything" flag.
-      "--yolo",
+      "--print",
+      "--dangerously-skip-permissions",
     ];
 
-    const model = opts.model || this.defaultModel;
-    if (model) {
-      args.push("-m", model);
-    }
-
     if (opts.resumeSessionId) {
-      args.push("--resume", opts.resumeSessionId);
+      args.push("--conversation", opts.resumeSessionId);
     }
 
+    args.push(prompt);
     return args;
   }
 
@@ -125,8 +120,6 @@ export class AntigravityBackend implements AgentBackend {
     timeoutId: ReturnType<typeof setTimeout>
   ): { messages: AsyncIterable<AgentMessage>; resultPromise: Promise<AgentResult> } {
     let output = "";
-    let lastSessionId: string | undefined;
-    let resultIsError = false;
     let resolveResult!: (result: AgentResult) => void;
 
     const resultPromise = new Promise<AgentResult>((resolve) => {
@@ -150,40 +143,34 @@ export class AntigravityBackend implements AgentBackend {
       try {
         const stdout = proc.stdout as ReadableStream<Uint8Array>;
         const reader = stdout.getReader();
-        let buffer = "";
+        const decoder = new TextDecoder();
 
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-
-          buffer += new TextDecoder().decode(value);
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            const parsed = this.parseLine(line);
-            if (!parsed) continue;
-            if (parsed.sessionId) lastSessionId = parsed.sessionId;
-            if (parsed.isError) resultIsError = true;
-            if (parsed.message) {
-              if (parsed.message.type === "text") output += parsed.message.content;
-              pushMessage(parsed.message);
-            }
-          }
+          const chunk = decoder.decode(value, { stream: true });
+          if (!chunk) continue;
+          output += chunk;
+          pushMessage({ type: "text", content: chunk, timestamp: Date.now() });
         }
 
-        if (buffer.trim()) {
-          const parsed = this.parseLine(buffer);
-          if (parsed?.message) {
-            if (parsed.message.type === "text") output += parsed.message.content;
-            pushMessage(parsed.message);
-          }
-          if (parsed?.sessionId) lastSessionId = parsed.sessionId;
-          if (parsed?.isError) resultIsError = true;
+        const tail = decoder.decode();
+        if (tail) {
+          output += tail;
+          pushMessage({ type: "text", content: tail, timestamp: Date.now() });
         }
       } catch (e) {
         log.error("Error reading agy stdout", { error: String(e) });
+      }
+
+      let stderrText = "";
+      try {
+        const stderr = proc.stderr as ReadableStream<Uint8Array>;
+        if (stderr) {
+          stderrText = await new Response(stderr).text();
+        }
+      } catch {
+        // ignore
       }
 
       streamDone = true;
@@ -200,10 +187,14 @@ export class AntigravityBackend implements AgentBackend {
       let status: AgentResult["status"];
       if (isAborted()) {
         status = "timeout";
-      } else if (exitCode === 0 && !resultIsError) {
+      } else if (exitCode === 0) {
         status = "completed";
       } else {
         status = "failed";
+      }
+
+      if (status === "failed" && stderrText) {
+        log.error("agy stderr", { stderr: stderrText.trim().slice(0, 2000) });
       }
 
       resolveResult({
@@ -211,12 +202,11 @@ export class AntigravityBackend implements AgentBackend {
         output,
         error:
           status === "failed"
-            ? resultIsError
-              ? "agy reported error event"
-              : `Process exited with code ${exitCode}`
+            ? `agy exited with code ${exitCode}${
+                stderrText ? `: ${stderrText.trim().split("\n").slice(-3).join(" | ")}` : ""
+              }`
             : undefined,
         durationMs,
-        sessionId: lastSessionId,
       });
     })();
 
@@ -241,176 +231,5 @@ export class AntigravityBackend implements AgentBackend {
     };
 
     return { messages, resultPromise };
-  }
-
-  /**
-   * Parse one stream-json line. Event schema per the Antigravity/Gemini CLI
-   * headless reference:
-   *   - init        : session metadata { session_id, model }
-   *   - message     : assistant chunk     { role, content }
-   *   - tool_use    : tool invocation     { name, args }
-   *   - tool_result : tool output         (dropped to avoid Linear noise)
-   *   - error       : non-fatal warning
-   *   - result      : final stats         { is_error?, ... }
-   */
-  private parseLine(
-    line: string
-  ): { message?: AgentMessage; sessionId?: string; isError?: boolean } | null {
-    let data: any;
-    try {
-      data = JSON.parse(line);
-    } catch {
-      return null;
-    }
-
-    const sessionId: string | undefined = data.session_id;
-
-    switch (data.type) {
-      case "init":
-        return { sessionId };
-
-      case "message": {
-        if (data.role && data.role !== "assistant") return { sessionId };
-        const content = extractText(data.content);
-        if (!content) return { sessionId };
-        return {
-          sessionId,
-          message: { type: "text", content, timestamp: Date.now() },
-        };
-      }
-
-      case "tool_use": {
-        const tool = mapToolName(String(data.name ?? ""));
-        const args = data.args ?? data.input ?? {};
-        const content =
-          tool === "TodoWrite"
-            ? JSON.stringify(toClaudeCodeTodos(args))
-            : JSON.stringify(args);
-        return {
-          sessionId,
-          message: { type: "tool_use", tool, content, timestamp: Date.now() },
-        };
-      }
-
-      case "tool_result":
-        return { sessionId };
-
-      case "error":
-        return {
-          sessionId,
-          isError: data.fatal === true,
-          message: {
-            type: "error",
-            content: String(data.message ?? data.error ?? "agy error"),
-            timestamp: Date.now(),
-          },
-        };
-
-      case "result":
-        return { sessionId, isError: data.is_error === true };
-
-      default:
-        return { sessionId };
-    }
-  }
-}
-
-function extractText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((b: any) => {
-        if (typeof b === "string") return b;
-        if (b && typeof b === "object" && typeof b.text === "string") return b.text;
-        return "";
-      })
-      .join("");
-  }
-  return "";
-}
-
-/**
- * Map agy tool names to Claude Code's vocabulary so the dispatcher's plan
- * parser (which keys off Claude Code tool names) works unchanged.
- *
- * Names are best-effort: the headless reference does not enumerate them.
- * Unknown names pass through verbatim.
- */
-function mapToolName(name: string): string {
-  switch (name) {
-    case "read_file":
-    case "ReadFile":
-      return "Read";
-    case "edit_file":
-    case "EditFile":
-      return "Edit";
-    case "write_file":
-    case "WriteFile":
-      return "Write";
-    case "shell":
-    case "run_shell_command":
-    case "RunShellCommand":
-      return "Bash";
-    case "grep":
-    case "Grep":
-      return "Grep";
-    case "glob":
-    case "Glob":
-      return "Glob";
-    case "ls":
-    case "list_directory":
-      return "LS";
-    case "update_todos":
-    case "todo_write":
-    case "TodoWrite":
-      return "TodoWrite";
-    case "web_search":
-    case "WebSearch":
-      return "WebSearch";
-    case "web_fetch":
-    case "WebFetch":
-      return "WebFetch";
-    case "task":
-    case "subagent":
-      return "Task";
-    default:
-      return name;
-  }
-}
-
-/**
- * Convert agy todo-update args to Claude Code's TodoWrite shape so the
- * dispatcher's `parseTodoWritePlan` can sync plans to Linear without
- * knowing the source backend. Best-effort — schema may need tuning once
- * a real payload is observed.
- */
-function toClaudeCodeTodos(args: unknown): unknown {
-  if (!args || typeof args !== "object") return args;
-  const todos = (args as { todos?: Array<{ content?: string; status?: string }> })
-    .todos;
-  if (!Array.isArray(todos)) return args;
-  return {
-    todos: todos.map((t) => ({
-      content: t.content || "",
-      status: normalizeTodoStatus(t.status),
-      activeForm: t.content || "",
-    })),
-  };
-}
-
-function normalizeTodoStatus(status: string | undefined): string {
-  switch (status) {
-    case "in_progress":
-    case "IN_PROGRESS":
-      return "in_progress";
-    case "completed":
-    case "COMPLETED":
-    case "done":
-      return "completed";
-    case "pending":
-    case "PENDING":
-    case "todo":
-    default:
-      return "pending";
   }
 }
