@@ -8,7 +8,7 @@
 
 - **不换项目管理工具**：继续用你现有的 Linear 来做项目管理，没有新平台、没有迁移成本
 - **用订阅，不是 API**：跑在你已经付费的 Claude Code（Pro / Max）、Codex（ChatGPT Plus / Pro / Team）或 Cursor（Pro）上，用量直接走订阅额度
-- **一行切换 agent**：`DEFAULT_AGENT=claude-code`、`codex` 或 `cursor`，所有 backend 共用同一套 dispatcher、plan 同步、stop 信号、会话 resume
+- **一行切换 agent**：`DEFAULT_AGENT=claude-code`、`codex`、`cursor` 或 `antigravity`，所有 backend 共用同一套 dispatcher、plan 同步、stop 信号、会话 resume
 - **完全本地执行**：agent 动的是你自己机器上的代码，session、权限、文件都在你手里
 
 ## 架构
@@ -21,7 +21,7 @@ Linear（webhook） → Issuely Bridge → 本地 Claude Code / Codex / Cursor �
 
 - **Issue Tracker Adapter** — 目前接的是 Linear：监听 webhook、把事件统一成 TaskRequest
 - **Task Dispatcher** — 排队、控制并发、转发进度更新
-- **Agent Adapter** — Claude Code CLI、Codex（通过 [`@openai/codex-sdk`](https://www.npmjs.com/package/@openai/codex-sdk)，会按平台自带 Rust `codex` 二进制）或 [Cursor CLI](https://cursor.com/docs/cli)（`cursor-agent` 的 `--print` 模式）：启动 agent、流式回传输出
+- **Agent Adapter** — Claude Code CLI、Codex（通过 [`@openai/codex-sdk`](https://www.npmjs.com/package/@openai/codex-sdk)，会按平台自带 Rust `codex` 二进制）、[Cursor CLI](https://cursor.com/docs/cli)（`cursor-agent` 的 `--print` 模式）或 [Antigravity CLI](https://antigravity.google/docs/cli-overview)（`agy` 的 `-p --output-format stream-json` 模式）：启动 agent、流式回传输出
 
 ## 快速开始
 
@@ -31,7 +31,8 @@ Linear（webhook） → Issuely Bridge → 本地 Claude Code / Codex / Cursor �
 - 至少配好一个 agent：
   - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)（`claude login`），和/或
   - [Codex CLI](https://github.com/openai/codex)（`codex login`）——`@openai/codex-sdk` 会自动带上对应平台的原生二进制，和/或
-  - [Cursor CLI](https://cursor.com/docs/cli)（`cursor-agent login`）——通过 OAuth 登录，用量走你的 Cursor 订阅
+  - [Cursor CLI](https://cursor.com/docs/cli)（`cursor-agent login`）——通过 OAuth 登录，用量走你的 Cursor 订阅，和/或
+  - [Antigravity CLI](https://antigravity.google/docs/cli-overview)（`agy`，首次运行会拉起 Google Sign-In）——用量走你的 Google AI Pro/Ultra 或 Code Assist 配额
 - 一个 Linear workspace（需要 admin 权限用来配 OAuth app）
 - 一个可以被 Linear 访问到的公网 URL，推荐用 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) 起一个
 
@@ -103,7 +104,7 @@ Linear（webhook） → Issuely Bridge → 本地 Claude Code / Codex / Cursor �
 3. 把中间进度（thinking、工具调用、plan）流式同步回 Linear
 4. 把最终结果作为 response activity 贴回去
 
-同一 thread 里的 follow-up 回复会自动续上之前的 session（`claude --resume`、`codex.resumeThread()` 或 `cursor-agent --resume`），上下文不会丢。
+同一 thread 里的 follow-up 回复会自动续上之前的 session（`claude --resume`、`codex.resumeThread()`、`cursor-agent --resume` 或 `agy --resume`），上下文不会丢。
 
 ### 项目目录映射
 
@@ -122,6 +123,7 @@ key 是 Linear 里的**项目名**，大小写不敏感。
 - `claude-code`（默认）—— 走 Claude Code CLI
 - `codex` —— 通过 `@openai/codex-sdk` 走 Codex
 - `cursor` —— 走 Cursor CLI（`cursor-agent`）
+- `antigravity` —— 走 Google Antigravity CLI（`agy`）
 
 所有 backend 启动时都会注册、独立做可用性探测；某一个不可用只会打 warning，不会影响其它。
 
@@ -166,6 +168,20 @@ Cursor 通过 [`cursor-agent` CLI](https://cursor.com/docs/cli) 的 `--print --o
 会话 resume 走 `cursor-agent --resume <session_id>`，跟 Claude Code 的 `--resume` 流程对齐。
 
 > **注：** 我们**不**用 [`@cursor/sdk`](https://www.npmjs.com/package/@cursor/sdk) TypeScript SDK。它的本地 runtime 走 connect-rpc/HTTP/2 跟内嵌 binary 通信，目前在 Bun 下有 bug（[oven-sh/bun#25589](https://github.com/oven-sh/bun/issues/25589) 等），工具调用会静默失败。CLI 走 stdio，把 Bun 从协议关键路径里摘了出去。
+
+### Antigravity
+
+Google 的 [Antigravity CLI](https://antigravity.google/docs/cli-overview)（Gemini CLI 的 Go 重写版本，二进制名是 `agy`）以 `agy -p "<prompt>" --output-format stream-json --yolo` 的 headless 模式运行。认证由 CLI 自己处理：第一次跑 `agy` 会拉起 Google Sign-In 浏览器流程（凭证存到系统 keyring），或者设 `ANTIGRAVITY_API_KEY` 用于 CI/脚本场景。`--yolo` 自动接受所有工具执行——webhook 模式没有 TTY 应答审批提示。
+
+| 变量                    | 取值                                                  | 默认值                  |
+| --------------------- | --------------------------------------------------- | -------------------- |
+| `ANTIGRAVITY_PATH`    | `agy` 二进制路径                                          | PATH 上找 `agy`        |
+| `ANTIGRAVITY_MODEL`   | 你账号支持的任意 Antigravity 模型（如 `gemini-3.5-flash`、`gemini-3.1-pro`、`claude-opus`、`gpt-oss-120b`） | CLI 默认值              |
+| `ANTIGRAVITY_API_KEY` | （可选）没完成 Google Sign-In 时的 API key 兜底                  | 未设（走 keyring）        |
+
+会话 resume 走 `agy --resume <session_id>`，跟 Claude Code / Cursor 的 `--resume` 流程对齐。
+
+> **关于 SDK vs CLI：** Antigravity 同时发布了 SDK，issuely 出于和 Cursor 一样的考虑选用 CLI——stdio 把 Bun 从协议关键路径里摘出去，也跟现有 backend 模式（`claude-code`、`cursor` 都是 CLI 驱动）对齐。除非 CLI 的 stream-json 事件不够用，否则没必要切到 SDK。
 
 ## 开发
 

@@ -8,7 +8,7 @@ English | [简体中文](README.zh-CN.md)
 
 - **No new project management tool**: keep using your existing Linear — no new platform, no migration cost
 - **Subscription, not API**: runs on the Claude Code (Pro / Max), Codex (ChatGPT Plus / Pro / Team), or Cursor (Pro) you're already paying for — usage is billed against your subscription
-- **Swap agents in one line**: set `DEFAULT_AGENT=claude-code`, `codex`, or `cursor`; all backends share the same dispatcher, plan-sync, stop-signal, and session-resume plumbing
+- **Swap agents in one line**: set `DEFAULT_AGENT=claude-code`, `codex`, `cursor`, or `antigravity`; all backends share the same dispatcher, plan-sync, stop-signal, and session-resume plumbing
 - **Fully local execution**: the agent touches code on your own machine; sessions, permissions, and files stay with you
 
 ## Architecture
@@ -21,7 +21,7 @@ Three layers:
 
 - **Issue Tracker Adapter** — currently Linear: listens to webhooks, normalizes events into TaskRequests
 - **Task Dispatcher** — queues tasks, controls concurrency, forwards progress updates
-- **Agent Adapter** — Claude Code CLI, Codex (via [`@openai/codex-sdk`](https://www.npmjs.com/package/@openai/codex-sdk), which bundles the Rust `codex` binary per platform), or [Cursor CLI](https://cursor.com/docs/cli) (`cursor-agent` in `--print` mode): spawns the agent, streams output back
+- **Agent Adapter** — Claude Code CLI, Codex (via [`@openai/codex-sdk`](https://www.npmjs.com/package/@openai/codex-sdk), which bundles the Rust `codex` binary per platform), [Cursor CLI](https://cursor.com/docs/cli) (`cursor-agent` in `--print` mode), or [Antigravity CLI](https://antigravity.google/docs/cli-overview) (`agy` in `-p --output-format stream-json` mode): spawns the agent, streams output back
 
 ## Quick Start
 
@@ -31,7 +31,8 @@ Three layers:
 - At least one agent set up:
   - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude login`), and/or
   - [Codex CLI](https://github.com/openai/codex) (`codex login`) — the bundled binary is installed automatically via `@openai/codex-sdk`, and/or
-  - [Cursor CLI](https://cursor.com/docs/cli) (`cursor-agent login`) — uses your Cursor subscription via OAuth; usage is billed against the logged-in account
+  - [Cursor CLI](https://cursor.com/docs/cli) (`cursor-agent login`) — uses your Cursor subscription via OAuth; usage is billed against the logged-in account, and/or
+  - [Antigravity CLI](https://antigravity.google/docs/cli-overview) (`agy`, first run completes Google Sign-In) — uses your Google AI Pro/Ultra or Code Assist quota
 - A Linear workspace (admin access required to set up the OAuth app)
 - A public URL reachable by Linear — [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) is recommended
 
@@ -97,7 +98,7 @@ Three layers:
 3. Stream progress (thinking, tool use, plan) back to Linear
 4. Post the final result as a response activity
 
-Follow-up replies in the same thread automatically resume the previous session (`claude --resume`, `codex.resumeThread()`, or `cursor-agent --resume`), so context is preserved.
+Follow-up replies in the same thread automatically resume the previous session (`claude --resume`, `codex.resumeThread()`, `cursor-agent --resume`, or `agy --resume`), so context is preserved.
 
 ### Project Directory Mapping
 
@@ -116,6 +117,7 @@ Set `DEFAULT_AGENT` in `.env`:
 - `claude-code` (default) — drives Claude Code CLI
 - `codex` — drives Codex via `@openai/codex-sdk`
 - `cursor` — drives the Cursor CLI (`cursor-agent`)
+- `antigravity` — drives Google's Antigravity CLI (`agy`)
 
 All backends are registered at startup and detected independently; an unavailable backend is logged as a warning but doesn't block the others.
 
@@ -159,7 +161,22 @@ Cursor runs via the [`cursor-agent` CLI](https://cursor.com/docs/cli) in `--prin
 
 Sessions resume via `cursor-agent --resume <session_id>`, mirroring Claude Code's `--resume` flow.
 
-> **Note:** the [`@cursor/sdk`](https://www.npmjs.com/package/@cursor/sdk) TypeScript SDK is **not** used. Its local runtime talks to its embedded binary over connect-rpc/HTTP/2, which currently fails under Bun ([oven-sh/bun#25589](https://github.com/oven-sh/bun/issues/25589) and related). The CLI uses plain stdio, so Bun stays out of the protocol critical path.
+> **Note:** the [`@cursor/sdk`](https://www.npmjs.com/package/@cursor/sdk)
+> TypeScript SDK is **not** used. Its local runtime talks to its embedded binary over connect-rpc/HTTP/2, which currently fails under Bun ([oven-sh/bun#25589](https://github.com/oven-sh/bun/issues/25589) and related). The CLI uses plain stdio, so Bun stays out of the protocol critical path.
+
+### Antigravity
+
+Google's [Antigravity CLI](https://antigravity.google/docs/cli-overview) (the Go-based replacement for Gemini CLI, binary name `agy`) runs in headless mode via `agy -p "<prompt>" --output-format stream-json --yolo`. Authentication is handled by the CLI itself — first run of `agy` opens a Google Sign-In browser flow (credentials cached in the OS keyring), or set `ANTIGRAVITY_API_KEY` for CI/scripted use. `--yolo` auto-accepts tool execution since the webhook flow has no TTY for approval prompts.
+
+| Variable             | Values                                                   | Default              |
+| -------------------- | -------------------------------------------------------- | -------------------- |
+| `ANTIGRAVITY_PATH`   | Path to the `agy` binary                                 | `agy` on PATH        |
+| `ANTIGRAVITY_MODEL`  | Any model accepted by your Antigravity account (e.g. `gemini-3.5-flash`, `gemini-3.1-pro`, `claude-opus`, `gpt-oss-120b`) | CLI default |
+| `ANTIGRAVITY_API_KEY` | (Optional) API key fallback if you haven't completed Google Sign-In | unset (uses keyring) |
+
+Sessions resume via `agy --resume <session_id>`, mirroring the Claude Code / Cursor flow.
+
+> **Note on SDK vs CLI:** Antigravity ships an SDK alongside the CLI, but issuely uses the CLI for the same reasons as Cursor — plain stdio keeps Bun out of the protocol critical path and matches the established backend pattern (`claude-code` and `cursor` are both CLI-driven). Switching to the SDK would only be worth it if the CLI's stream-json event surface turns out to be insufficient.
 
 ## Development
 

@@ -52,6 +52,10 @@ export interface AgentConfig {
     path?: string;
     model?: string;
   };
+  antigravity?: {
+    path?: string;
+    model?: string;
+  };
 }
 
 export interface Config {
@@ -130,6 +134,10 @@ export function loadConfig(): Config {
       cursor: {
         path: process.env.CURSOR_AGENT_PATH,
         model: process.env.CURSOR_MODEL,
+      },
+      antigravity: {
+        path: process.env.ANTIGRAVITY_PATH,
+        model: process.env.ANTIGRAVITY_MODEL,
       },
     },
   };
