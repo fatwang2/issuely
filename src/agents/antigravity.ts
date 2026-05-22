@@ -1,4 +1,7 @@
 import { spawn, type Subprocess } from "bun";
+import { readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { createLogger } from "../util/logger";
 import type {
   AgentBackend,
@@ -21,7 +24,21 @@ const log = createLogger("antigravity");
  *
  * The CLI handles auth itself via OS keyring (Google Sign-In) or
  * `ANTIGRAVITY_API_KEY`; we just spawn the process and read stdout.
+ *
+ * Session continuity: agy stores each conversation as
+ * `~/.gemini/antigravity-cli/conversations/<uuid>.pb` and exposes resume via
+ * `--conversation <uuid>`. The CLI does NOT print the conversation id, so we
+ * snapshot that directory before spawning and diff afterwards to recover the
+ * id of the just-created (or, on resume, reused) conversation. That id is
+ * surfaced on AgentResult.sessionId so callers can chain follow-up turns.
  */
+const AGY_CONVERSATIONS_DIR = join(
+  homedir(),
+  ".gemini",
+  "antigravity-cli",
+  "conversations"
+);
+
 export class AntigravityBackend implements AgentBackend {
   readonly name = "antigravity";
   private executablePath: string;
@@ -57,6 +74,8 @@ export class AntigravityBackend implements AgentBackend {
       model: opts.model || this.defaultModel,
     });
 
+    const preExistingConversations = snapshotConversationIds();
+
     const proc = spawn(args, {
       cwd: opts.cwd,
       stdin: "ignore",
@@ -79,7 +98,9 @@ export class AntigravityBackend implements AgentBackend {
       proc,
       startTime,
       () => aborted,
-      timeoutId
+      timeoutId,
+      opts.resumeSessionId,
+      preExistingConversations
     );
 
     return {
@@ -94,15 +115,21 @@ export class AntigravityBackend implements AgentBackend {
   }
 
   private buildArgs(prompt: string, opts: ExecOptions): string[] {
-    // agy v1.0.0 flags (verified via `agy --help`):
+    // agy v1.0.x flags (verified via `agy --help`):
     //   -p / --print                       single-prompt non-interactive mode
     //   --dangerously-skip-permissions     auto-approve tool calls (no TTY)
     //   --conversation <id>                resume a previous conversation
+    //   --add-dir <path>                   add a directory to agy's workspace
+    // agy's workspace is independent of the spawned process's cwd — without
+    // --add-dir it falls back to ~/.gemini/antigravity-cli/scratch and ignores
+    // the repo entirely, so we always pin its workspace to opts.cwd.
     // There is no --output-format / --format / --model flag yet.
     const args = [
       this.executablePath,
       "--print",
       "--dangerously-skip-permissions",
+      "--add-dir",
+      opts.cwd,
     ];
 
     if (opts.resumeSessionId) {
@@ -117,7 +144,9 @@ export class AntigravityBackend implements AgentBackend {
     proc: Subprocess,
     startTime: number,
     isAborted: () => boolean,
-    timeoutId: ReturnType<typeof setTimeout>
+    timeoutId: ReturnType<typeof setTimeout>,
+    resumedSessionId: string | undefined,
+    preExistingConversations: Set<string>
   ): { messages: AsyncIterable<AgentMessage>; resultPromise: Promise<AgentResult> } {
     let output = "";
     let resolveResult!: (result: AgentResult) => void;
@@ -197,6 +226,12 @@ export class AntigravityBackend implements AgentBackend {
         log.error("agy stderr", { stderr: stderrText.trim().slice(0, 2000) });
       }
 
+      const sessionId =
+        resumedSessionId ?? detectNewConversationId(preExistingConversations);
+      if (!sessionId) {
+        log.warn("Could not determine agy conversation id; follow-up turns won't be able to resume");
+      }
+
       resolveResult({
         status,
         output,
@@ -207,6 +242,7 @@ export class AntigravityBackend implements AgentBackend {
               }`
             : undefined,
         durationMs,
+        sessionId,
       });
     })();
 
@@ -232,4 +268,45 @@ export class AntigravityBackend implements AgentBackend {
 
     return { messages, resultPromise };
   }
+}
+
+function snapshotConversationIds(): Set<string> {
+  try {
+    return new Set(
+      readdirSync(AGY_CONVERSATIONS_DIR)
+        .filter((f) => f.endsWith(".pb"))
+        .map((f) => f.slice(0, -3))
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function detectNewConversationId(previous: Set<string>): string | undefined {
+  let entries: string[];
+  try {
+    entries = readdirSync(AGY_CONVERSATIONS_DIR).filter((f) => f.endsWith(".pb"));
+  } catch {
+    return undefined;
+  }
+
+  const fresh = entries
+    .map((f) => f.slice(0, -3))
+    .filter((id) => !previous.has(id));
+
+  if (fresh.length === 0) return undefined;
+  // Concurrent agy invocations could each drop a new file; pick the newest by
+  // mtime so we attribute ours correctly.
+  if (fresh.length === 1) return fresh[0];
+
+  let best: { id: string; mtime: number } | undefined;
+  for (const id of fresh) {
+    try {
+      const stat = Bun.file(join(AGY_CONVERSATIONS_DIR, `${id}.pb`)).lastModified;
+      if (!best || stat > best.mtime) best = { id, mtime: stat };
+    } catch {
+      // skip
+    }
+  }
+  return best?.id;
 }

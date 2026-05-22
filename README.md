@@ -21,7 +21,7 @@ Three layers:
 
 - **Issue Tracker Adapter** — currently Linear: listens to webhooks, normalizes events into TaskRequests
 - **Task Dispatcher** — queues tasks, controls concurrency, forwards progress updates
-- **Agent Adapter** — Claude Code CLI, Codex (via [`@openai/codex-sdk`](https://www.npmjs.com/package/@openai/codex-sdk), which bundles the Rust `codex` binary per platform), [Cursor CLI](https://cursor.com/docs/cli) (`cursor-agent` in `--print` mode), or [Antigravity CLI](https://antigravity.google/docs/cli-overview) (`agy` in `-p --output-format stream-json` mode): spawns the agent, streams output back
+- **Agent Adapter** — Claude Code CLI, Codex (via [`@openai/codex-sdk`](https://www.npmjs.com/package/@openai/codex-sdk), which bundles the Rust `codex` binary per platform), [Cursor CLI](https://cursor.com/docs/cli) (`cursor-agent` in `--print` mode), or [Antigravity CLI](https://antigravity.google/docs/cli-overview) (`agy` in `--print --dangerously-skip-permissions` mode): spawns the agent, streams output back
 
 ## Quick Start
 
@@ -166,7 +166,7 @@ Sessions resume via `cursor-agent --resume <session_id>`, mirroring Claude Code'
 
 ### Antigravity
 
-Google's [Antigravity CLI](https://antigravity.google/docs/cli-overview) (the Go-based replacement for Gemini CLI, binary name `agy`) runs in headless mode via `agy -p "<prompt>" --output-format stream-json --yolo`. Authentication is handled by the CLI itself — first run of `agy` opens a Google Sign-In browser flow (credentials cached in the OS keyring), or set `ANTIGRAVITY_API_KEY` for CI/scripted use. `--yolo` auto-accepts tool execution since the webhook flow has no TTY for approval prompts.
+Google's [Antigravity CLI](https://antigravity.google/docs/cli-overview) (the Go-based replacement for Gemini CLI, binary name `agy`) runs in headless mode via `agy --print --dangerously-skip-permissions --add-dir <cwd> "<prompt>"`. Authentication is handled by the CLI itself — first run of `agy` opens a Google Sign-In browser flow (credentials cached in the OS keyring), or set `ANTIGRAVITY_API_KEY` for CI/scripted use. `--dangerously-skip-permissions` auto-accepts tool execution since the webhook flow has no TTY for approval prompts.
 
 | Variable             | Values                                                   | Default              |
 | -------------------- | -------------------------------------------------------- | -------------------- |
@@ -174,7 +174,7 @@ Google's [Antigravity CLI](https://antigravity.google/docs/cli-overview) (the Go
 | `ANTIGRAVITY_MODEL`  | Any model accepted by your Antigravity account (e.g. `gemini-3.5-flash`, `gemini-3.1-pro`, `claude-opus`, `gpt-oss-120b`) | CLI default |
 | `ANTIGRAVITY_API_KEY` | (Optional) API key fallback if you haven't completed Google Sign-In | unset (uses keyring) |
 
-Sessions resume via `agy --resume <session_id>`, mirroring the Claude Code / Cursor flow.
+Sessions resume via `agy --conversation <session_id>`, mirroring the Claude Code / Cursor flow.
 
 > **Note on SDK vs CLI:** Antigravity ships an SDK alongside the CLI, but issuely uses the CLI for the same reasons as Cursor — plain stdio keeps Bun out of the protocol critical path and matches the established backend pattern (`claude-code` and `cursor` are both CLI-driven). Switching to the SDK would only be worth it if the CLI's stream-json event surface turns out to be insufficient.
 

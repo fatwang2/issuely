@@ -21,7 +21,7 @@ Linear（webhook） → Issuely Bridge → 本地 Claude Code / Codex / Cursor �
 
 - **Issue Tracker Adapter** — 目前接的是 Linear：监听 webhook、把事件统一成 TaskRequest
 - **Task Dispatcher** — 排队、控制并发、转发进度更新
-- **Agent Adapter** — Claude Code CLI、Codex（通过 [`@openai/codex-sdk`](https://www.npmjs.com/package/@openai/codex-sdk)，会按平台自带 Rust `codex` 二进制）、[Cursor CLI](https://cursor.com/docs/cli)（`cursor-agent` 的 `--print` 模式）或 [Antigravity CLI](https://antigravity.google/docs/cli-overview)（`agy` 的 `-p --output-format stream-json` 模式）：启动 agent、流式回传输出
+- **Agent Adapter** — Claude Code CLI、Codex（通过 [`@openai/codex-sdk`](https://www.npmjs.com/package/@openai/codex-sdk)，会按平台自带 Rust `codex` 二进制）、[Cursor CLI](https://cursor.com/docs/cli)（`cursor-agent` 的 `--print` 模式）或 [Antigravity CLI](https://antigravity.google/docs/cli-overview)（`agy` 的 `--print --dangerously-skip-permissions` 模式）：启动 agent、流式回传输出
 
 ## 快速开始
 
@@ -171,7 +171,7 @@ Cursor 通过 [`cursor-agent` CLI](https://cursor.com/docs/cli) 的 `--print --o
 
 ### Antigravity
 
-Google 的 [Antigravity CLI](https://antigravity.google/docs/cli-overview)（Gemini CLI 的 Go 重写版本，二进制名是 `agy`）以 `agy -p "<prompt>" --output-format stream-json --yolo` 的 headless 模式运行。认证由 CLI 自己处理：第一次跑 `agy` 会拉起 Google Sign-In 浏览器流程（凭证存到系统 keyring），或者设 `ANTIGRAVITY_API_KEY` 用于 CI/脚本场景。`--yolo` 自动接受所有工具执行——webhook 模式没有 TTY 应答审批提示。
+Google 的 [Antigravity CLI](https://antigravity.google/docs/cli-overview)（Gemini CLI 的 Go 重写版本，二进制名是 `agy`）以 `agy --print --dangerously-skip-permissions --add-dir <cwd> "<prompt>"` 的 headless 模式运行。认证由 CLI 自己处理：第一次跑 `agy` 会拉起 Google Sign-In 浏览器流程（凭证存到系统 keyring），或者设 `ANTIGRAVITY_API_KEY` 用于 CI/脚本场景。`--dangerously-skip-permissions` 自动接受所有工具执行——webhook 模式没有 TTY 应答审批提示。
 
 | 变量                    | 取值                                                  | 默认值                  |
 | --------------------- | --------------------------------------------------- | -------------------- |
@@ -179,7 +179,7 @@ Google 的 [Antigravity CLI](https://antigravity.google/docs/cli-overview)（Gem
 | `ANTIGRAVITY_MODEL`   | 你账号支持的任意 Antigravity 模型（如 `gemini-3.5-flash`、`gemini-3.1-pro`、`claude-opus`、`gpt-oss-120b`） | CLI 默认值              |
 | `ANTIGRAVITY_API_KEY` | （可选）没完成 Google Sign-In 时的 API key 兜底                  | 未设（走 keyring）        |
 
-会话 resume 走 `agy --resume <session_id>`，跟 Claude Code / Cursor 的 `--resume` 流程对齐。
+会话 resume 走 `agy --conversation <session_id>`，跟 Claude Code / Cursor 的 `--resume` 流程对齐。
 
 > **关于 SDK vs CLI：** Antigravity 同时发布了 SDK，issuely 出于和 Cursor 一样的考虑选用 CLI——stdio 把 Bun 从协议关键路径里摘出去，也跟现有 backend 模式（`claude-code`、`cursor` 都是 CLI 驱动）对齐。除非 CLI 的 stream-json 事件不够用，否则没必要切到 SDK。
 

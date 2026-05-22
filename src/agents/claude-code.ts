@@ -117,9 +117,13 @@ export class ClaudeCodeBackend implements AgentBackend {
       // a Linear MCP) from being auto-loaded, which would let the agent
       // post to Linear directly and duplicate the bridge's output.
       "--strict-mcp-config",
-      "--permission-mode",
-      this.permissionMode,
     ];
+
+    if (this.permissionMode === "bypassPermissions") {
+      args.push("--dangerously-skip-permissions");
+    } else {
+      args.push("--permission-mode", this.permissionMode);
+    }
 
     const model = opts.model || this.defaultModel;
     if (model) {
